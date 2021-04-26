@@ -2,7 +2,7 @@
 test = perfrunner.tests.magma.WarmupDGMTest
 
 [showfast]
-title = Warmup time (min), 4 nodes, 1 bucket x 1B x 1KB, Couchstore
+title = Warmup time (min), 4 nodes, 1 bucket x 1B x 1KB, 2%% Resident Ratio, Couchstore
 component = hidd
 category = warmup
 
@@ -40,3 +40,7 @@ throughput = 20000
 items = 1000000000
 workers = 128
 time = 3600
+
+[clients]
+libcouchbase = 2.9.3
+python_client = 2.5.0

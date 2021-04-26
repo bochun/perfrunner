@@ -2,7 +2,7 @@
 test = perfrunner.tests.magma.RebalanceKVDGMTest
 
 [showfast]
-title = Rebalance-swap (min), 4 -> 4, 1B x 1KB, 15K ops/sec (90/10 R/W), 10%% cache miss rate, Magma
+title = Rebalance-swap (min), 4 -> 4, 1B x 1KB, 15K ops/sec (90/10 R/W), 10%% cache miss rate, 2%% Resident Ratio, Magma
 component = hidd
 category = reb
 
@@ -58,7 +58,7 @@ reads = 90
 updates = 5
 deletes = 0
 items = 1000000000
-workers = 40
+workers = 128
 throughput = 15000
 working_set = 1
 working_set_access = 90
@@ -68,3 +68,7 @@ nodes_after = 4
 swap = 1
 start_after = 1800
 stop_after = 1800
+
+[clients]
+libcouchbase = 2.9.3
+python_client = 2.5.0

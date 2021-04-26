@@ -2,7 +2,7 @@
 test = perfrunner.tests.secondary.InitialIncrementalScanLatencyTest
 
 [showfast]
-title = 1 bucket x 100M x 1KB, 100K KV ops/sec, 10k indexes, random workload, 50%% Resident, Plasma, s=1 c=1000
+title = 1 bucket x 100M x 1KB, 100K KV ops/sec, 10000 Indexes, random workload, 50%% Resident, Plasma, s=1 c=1000
 component = secondary
 category = lat
 sub_category = PlasmaDGM
@@ -46,6 +46,8 @@ scan_time = 1500
 queryport.client.usePlanner = false
 queryport.client.log_level = Warn
 projector.backChanSize = 500000
+disable_perindex_stats = True
+indexer.settings.build.batch_size = 100
 
 [access]
 creates = 10
@@ -55,7 +57,3 @@ ops = 100000000
 items = 100000000
 throughput = 100000
 workers = 80
-
-[clients]
-libcouchbase = 3.0.2
-python_client = 3.0.4

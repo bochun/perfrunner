@@ -42,14 +42,19 @@ creates = 0
 reads = 0
 updates = 100
 deletes = 0
-throughput = 30000
+throughput = 15000
 items = 20000000
 workers = 20
 time = 1200
 n1ql_queries = page-query
-n1ql_workers = 240
+n1ql_workers = 120
+workload_instances = 2
 
 [n1ql-page-query]
 statement = execute function func($1);
 scan_consistency = not_bounded
 args = ["{capped_small}"]
+
+[clients]
+libcouchbase = 2.9.3
+python_client = 2.5.0

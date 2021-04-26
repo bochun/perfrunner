@@ -39,9 +39,13 @@ items = 20000000
 workers = 20
 time = 1200
 n1ql_queries = empty-function
-n1ql_workers = 240
+n1ql_workers = 120
 n1ql_throughput = 10000
 
 [n1ql-empty-function]
 statement = execute function func();
 args = []
+
+[clients]
+libcouchbase = 2.9.3
+python_client = 2.5.0

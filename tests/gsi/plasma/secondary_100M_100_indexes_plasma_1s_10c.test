@@ -40,6 +40,7 @@ indexer.settings.max_cpu_percent = 4800
 queryport.client.usePlanner = false
 queryport.client.log_level = Warn
 projector.backChanSize = 500000
+indexer.settings.build.batch_size = 100
 
 [access]
 updates = 100
@@ -47,7 +48,3 @@ ops = 100000000
 items = 100000000
 throughput = 100000
 workers = 80
-
-[clients]
-libcouchbase = 3.0.2
-python_client = 3.0.4

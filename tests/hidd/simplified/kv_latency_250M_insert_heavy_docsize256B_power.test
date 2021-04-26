@@ -1,5 +1,5 @@
 [test_case]
-test = perfrunner.tests.magma.WriteLatencyDGMTest
+test = perfrunner.tests.magma.MixedLatencyDGMTest
 
 [showfast]
 title = Latency(ms), Workload S0.4.1, 2 nodes, 250M x 256B, 20K ops/sec (90/10 C/R), Power distribution (α=10), Magma
@@ -53,7 +53,11 @@ reads = 10
 updates = 0
 deletes = 0
 items = 250000000
-workers = 60
+workers = 128
 throughput = 20000
 power_alpha = 10
 time = 3600
+
+[clients]
+libcouchbase = 2.9.3
+python_client = 2.5.0

@@ -2,7 +2,7 @@
 test = perfrunner.tests.magma.ThroughputDGMMagmaTest
 
 [showfast]
-title = Avg Throughput (ops/sec), 4 nodes, 1 bucket x 1B x 1KB, 50/50 R/W, 75%% cache miss rate, Magma
+title = Avg Throughput (ops/sec), 4 nodes, 1 bucket x 1B x 1KB, 50/50 R/W, 75%% cache miss rate, 2%% Resident Ratio, Magma
 component = hidd
 category = ops
 
@@ -60,3 +60,7 @@ workers = 128
 time = 3600
 working_set = 1
 working_set_access = 25
+
+[clients]
+libcouchbase = 2.9.3
+python_client = 2.5.0

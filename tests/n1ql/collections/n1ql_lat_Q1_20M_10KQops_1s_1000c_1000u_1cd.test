@@ -33,7 +33,7 @@ items = 20000000
 workers = 0
 n1ql_queries = key-value-lookup
 n1ql_throughput = 10000
-n1ql_workers = 180
+n1ql_workers = 120
 collection_mod_workers = 1
 collection_mod_throughput = 1
 time = 1200
@@ -41,7 +41,3 @@ time = 1200
 [n1ql-key-value-lookup]
 statement = SELECT * FROM `bucket-1` USE KEYS[$1];
 args = ["{key}"]
-
-[clients]
-libcouchbase = 3.0.2
-python_client = git+http://review.couchbase.org/couchbase-python-client@refs/changes/91/135991/3

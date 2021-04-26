@@ -1,10 +1,10 @@
+import copy
 import glob
 import shutil
 import time
 from typing import Callable, Iterable, List, Optional
 
 from logger import logger
-
 from perfrunner.helpers import local
 from perfrunner.helpers.cluster import ClusterManager
 from perfrunner.helpers.memcached import MemcachedHelper
@@ -15,7 +15,7 @@ from perfrunner.helpers.profiler import Profiler
 from perfrunner.helpers.remote import RemoteHelper
 from perfrunner.helpers.reporter import ShowFastReporter
 from perfrunner.helpers.rest import RestHelper
-from perfrunner.helpers.worker import spring_task, WorkerManager
+from perfrunner.helpers.worker import WorkerManager, spring_task
 from perfrunner.settings import (
     ClusterSpec,
     PhaseSettings,
@@ -36,19 +36,16 @@ class PerfTest:
                  verbose: bool):
         self.cluster_spec = cluster_spec
         self.test_config = test_config
-
+        self.dynamic_infra = self.cluster_spec.dynamic_infrastructure
         self.target_iterator = TargetIterator(cluster_spec, test_config)
-
         self.cluster = ClusterManager(cluster_spec, test_config)
+        self.remote = RemoteHelper(cluster_spec, verbose)
+        self.profiler = Profiler(cluster_spec, test_config)
+        self.master_node = next(cluster_spec.masters)
         self.memcached = MemcachedHelper(test_config)
         self.monitor = Monitor(cluster_spec, test_config, verbose)
         self.rest = RestHelper(cluster_spec)
-        self.remote = RemoteHelper(cluster_spec, verbose)
-        self.profiler = Profiler(cluster_spec, test_config)
-
-        self.master_node = next(cluster_spec.masters)
         self.build = self.rest.get_version(self.master_node)
-
         self.metrics = MetricHelper(self)
         self.reporter = ShowFastReporter(cluster_spec, test_config, self.build)
 
@@ -95,6 +92,9 @@ class PerfTest:
         return self.rest.get_active_nodes_by_role(self.master_node, 'eventing')
 
     def tear_down(self):
+        if self.test_config.profiling_settings.linux_perf_profile_flag:
+            self.collect_linux_perf_profiles()
+
         if self.test_config.test_case.use_workers:
             self.worker_manager.download_celery_logs()
             self.worker_manager.terminate()
@@ -107,9 +107,12 @@ class PerfTest:
 
             self.cluster.reset_memory_settings()
 
+    def collect_linux_perf_profiles(self):
+        self.remote.generate_linux_perf_script()
+        self.remote.get_linuxperf_files()
+
     def collect_logs(self):
         self.remote.collect_info()
-
         for hostname in self.cluster_spec.servers:
             for fname in glob.glob('{}/*.zip'.format(hostname)):
                 shutil.move(fname, '{}.zip'.format(hostname))
@@ -132,11 +135,17 @@ class PerfTest:
             fh.write(cert)
 
     def check_rebalance(self) -> str:
-        for master in self.cluster_spec.masters:
-            if self.rest.is_not_balanced(master):
-                return 'The cluster is not balanced'
+        if self.dynamic_infra:
+            pass
+        else:
+            for master in self.cluster_spec.masters:
+                if self.rest.is_not_balanced(master):
+                    return 'The cluster is not balanced'
 
     def check_failover(self) -> Optional[str]:
+        if self.dynamic_infra:
+            return
+
         if hasattr(self, 'rebalance_settings'):
             if self.rebalance_settings.failover or \
                     self.rebalance_settings.graceful_failover:
@@ -162,13 +171,31 @@ class PerfTest:
             self.test_config.restore_settings.backup_repo,
         )
 
+    def fts_collections_restore(self):
+        restore_mapping = None
+        collection_map = self.test_config.collection.collection_map
+        for target in self.target_iterator:
+            if not collection_map.get(
+                    target.bucket, {}).get("_default", {}).get("_default", {}).get('load', 0):
+                restore_mapping = \
+                    "{0}._default._default={0}.scope-1.collection-1"\
+                    .format(target.bucket)
+            logger.info('Restoring data')
+            self.remote.restore_data(
+                self.test_config.restore_settings.backup_storage,
+                self.test_config.restore_settings.backup_repo,
+                map_data=restore_mapping
+            )
+
     def fts_cbimport(self):
         logger.info('Restoring data into collections')
-        num_collections = self.test_config.jts_access_settings.collections
+        num_collections = self.test_config.jts_access_settings.collections_number
+        scope_prefix = self.test_config.jts_access_settings.scope_prefix
         collection_prefix = self.test_config.jts_access_settings.collection_prefix
-        scope = self.test_config.jts_access_settings.scope
+        scope = self.test_config.jts_access_settings.scope_number
         name_of_backup = self.test_config.restore_settings.backup_repo
-        self.remote.export_data(num_collections, collection_prefix, scope, name_of_backup)
+        self.remote.export_data(num_collections, collection_prefix, scope_prefix,
+                                scope, name_of_backup)
 
     def restore_local(self):
         logger.info('Restoring data')
@@ -223,8 +250,18 @@ class PerfTest:
             for server in self.index_nodes:
                 self.monitor.monitor_indexing(server)
 
-    def check_num_items(self):
-        if getattr(self.test_config.load_settings, 'collections', None):
+    def check_num_items(self, bucket_items: dict = None):
+        if bucket_items:
+            for target in self.target_iterator:
+                num_items = bucket_items.get(target.bucket, None)
+                if num_items:
+                    num_items = num_items * (1 + self.test_config.bucket.replica_number)
+                    self.monitor.monitor_num_items(
+                        target.node,
+                        target.bucket,
+                        num_items
+                    )
+        elif getattr(self.test_config.load_settings, 'collections', None):
             for target in self.target_iterator:
                 num_load_targets = 0
                 target_scope_collections = self.test_config.load_settings.collections[target.bucket]
@@ -303,10 +340,23 @@ class PerfTest:
             self.create_fts_index_n1ql()
 
     def create_fts_index_n1ql(self):
+        logger.info("Creating FTS index")
         definition = read_json(self.test_config.index_settings.couchbase_fts_index_configfile)
+        bucket_name = self.test_config.buckets[0]
         definition.update({
             'name': self.test_config.index_settings.couchbase_fts_index_name
         })
+        if self.test_config.collection.collection_map:
+            collection_map = self.test_config.collection.collection_map
+            definition["params"]["doc_config"]["mode"] = "scope.collection.type_field"
+            scope_name = list(collection_map[bucket_name].keys())[1:][0]
+            collection_name = list(collection_map[bucket_name][scope_name].keys())[0]
+            ind_type_mapping = \
+                copy.deepcopy(definition["params"]["mapping"]["default_mapping"])
+            definition["params"]["mapping"]["default_mapping"]["enabled"] = False
+            new_type_mapping_name = "{}.{}".format(scope_name, collection_name)
+            definition["params"]["mapping"]["types"] = {new_type_mapping_name: ind_type_mapping}
+
         logger.info('Index definition: {}'.format(pretty_dict(definition)))
         self.rest.create_fts_index(
             self.fts_nodes[0],

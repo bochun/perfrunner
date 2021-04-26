@@ -2,7 +2,7 @@
 test = perfrunner.tests.magma.MixedLatencyDGMTest
 
 [showfast]
-title = latency (ms), 4 nodes, 1 bucket x 10B x 1KB, 15K ops/sec (25/50/25 C/R/W), 10%% cache miss rate, Couchstore
+title = latency (ms), 4 nodes, 1 bucket x 10B x 1KB, 15K ops/sec (25/50/25 C/R/W), 10%% cache miss rate, 1%% Resident Ratio, Couchstore
 component = hidd
 category = latency
 
@@ -32,9 +32,9 @@ workers = 128
 working_set = 1
 
 [access]
-creates = 5
-reads = 90
-updates = 5
+creates = 25
+reads = 50
+updates = 25
 deletes = 0
 items = 10000000000
 working_set = 1
@@ -42,3 +42,7 @@ working_set_access = 90
 workers = 128
 throughput = 15000
 time = 3600
+
+[clients]
+libcouchbase = 2.9.3
+python_client = 2.5.0

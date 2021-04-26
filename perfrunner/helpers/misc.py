@@ -1,4 +1,6 @@
+import fileinput
 import json
+import shutil
 import time
 from hashlib import md5
 from typing import Any, Union
@@ -94,3 +96,60 @@ def human_format(number: float) -> str:
         magnitude += 1
         number /= 1e3
     return '{:.0f}{}'.format(number, ['', 'K', 'M', 'G', 'T', 'P'][magnitude])
+
+
+def copy_template(source, dest):
+    shutil.copyfile(source, dest)
+
+
+def inject_config_tags(config_path,
+                       operator_tag,
+                       admission_controller_tag):
+    #  operator
+    with fileinput.FileInput(config_path, inplace=True, backup='.bak') as file:
+        search = 'couchbase/operator:build'
+        replace = operator_tag
+        for line in file:
+            print(line.replace(search, replace), end='')
+
+    #  admission controller
+    with fileinput.FileInput(config_path, inplace=True, backup='.bak') as file:
+        search = 'couchbase/admission-controller:build'
+        replace = admission_controller_tag
+        for line in file:
+            print(line.replace(search, replace), end='')
+
+
+def inject_cluster_tags(cluster_path,
+                        couchbase_tag,
+                        operator_backup_tag):
+    #  couchbase
+    with fileinput.FileInput(cluster_path, inplace=True, backup='.bak') as file:
+        search = 'couchbase/server:build'
+        replace = couchbase_tag
+        for line in file:
+            print(line.replace(search, replace), end='')
+
+    #  operator backup
+    with fileinput.FileInput(cluster_path, inplace=True, backup='.bak') as file:
+        search = 'couchbase/operator-backup:build'
+        replace = operator_backup_tag
+        for line in file:
+            print(line.replace(search, replace), end='')
+
+
+def inject_server_count(cluster_path, server_count):
+    with fileinput.FileInput(cluster_path, inplace=True, backup='.bak') as file:
+        search = 'size: node_count'
+        replace = 'size: {}'.format(server_count)
+        for line in file:
+            print(line.replace(search, replace), end='')
+
+
+def inject_num_workers(num_workers, worker_template_path, worker_path):
+    shutil.copyfile(worker_template_path, worker_path)
+    with fileinput.FileInput(worker_path, inplace=True, backup='.bak') as file:
+        search = 'NUM_WORKERS'
+        replace = '{}'.format(str(num_workers))
+        for line in file:
+            print(line.replace(search, replace), end='')

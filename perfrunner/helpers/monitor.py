@@ -3,10 +3,23 @@ import time
 from logger import logger
 from perfrunner.helpers import misc
 from perfrunner.helpers.remote import RemoteHelper
-from perfrunner.helpers.rest import RestHelper
+from perfrunner.helpers.rest import DefaultRestHelper, KubernetesRestHelper
+from perfrunner.settings import ClusterSpec, TestConfig
 
 
-class Monitor(RestHelper):
+class Monitor:
+
+    def __new__(cls,
+                cluster_spec: ClusterSpec,
+                test_config: TestConfig,
+                verbose: bool = False):
+        if cluster_spec.dynamic_infrastructure:
+            return KubernetesMonitor(cluster_spec, test_config, verbose)
+        else:
+            return DefaultMonitor(cluster_spec, test_config, verbose)
+
+
+class DefaultMonitor(DefaultRestHelper):
 
     MAX_RETRY = 150
     MAX_RETRY_RECOVERY = 1200
@@ -46,6 +59,10 @@ class Monitor(RestHelper):
         self.cluster_spec = cluster_spec
         self.test_config = test_config
         self.remote = RemoteHelper(cluster_spec, verbose)
+        self.master_node = next(cluster_spec.masters)
+        self.build = self.get_version(self.master_node)
+        version, build_number = self.build.split('-')
+        self.build_version_number = tuple(map(int, version.split('.'))) + (int(build_number),)
 
     def monitor_rebalance(self, host):
         logger.info('Monitoring rebalance status')
@@ -90,14 +107,26 @@ class Monitor(RestHelper):
                         logger.info('{} reached 0'.format(metric))
                     metrics.remove(metric)
                 else:
-                    if (metric == 'ep_dcp_other_items_remaining' or
-                            metric == 'ep_dcp_replica_items_remaining'):
-                        logger.info('{} reached 0'.format(metric))
-                        metrics.remove(metric)
+                    logger.info('{} reached 0'.format(metric))
+                    metrics.remove(metric)
             if metrics:
                 time.sleep(self.POLLING_INTERVAL)
             if time.time() - start_time > self.TIMEOUT:
                 raise Exception('Monitoring got stuck')
+
+    def _wait_for_empty_dcp_queues(self, host, bucket, stats_function):
+        start_time = time.time()
+        while True:
+            kv_dcp_stats = stats_function(host, bucket)
+            stats = int(kv_dcp_stats["data"][0]["values"][-1][1])
+            if stats:
+                logger.info('{} = {}'.format('ep_dcp_replica_items_remaining', stats))
+                if time.time() - start_time > self.TIMEOUT:
+                    raise Exception('Monitoring got stuck')
+                time.sleep(self.POLLING_INTERVAL)
+            else:
+                logger.info('{} reached 0'.format('ep_dcp_replica_items_remaining'))
+                break
 
     def _wait_for_replica_count_match(self, host, bucket):
         start_time = time.time()
@@ -205,8 +234,36 @@ class Monitor(RestHelper):
 
     def monitor_dcp_queues(self, host, bucket):
         logger.info('Monitoring DCP queues: {}'.format(bucket))
-        self._wait_for_empty_queues(host, bucket, self.DCP_QUEUES,
-                                    self.get_bucket_stats)
+
+        if self.build_version_number < (1, 0, 0, 0):
+            if self.test_config.bucket.replica_number != 0:
+                if self.build_version_number < (0, 0, 0, 2106):
+                    self._wait_for_empty_dcp_queues(host, bucket,
+                                                    self.get_dcp_replication_items)
+                else:
+                    self._wait_for_empty_dcp_queues(host, bucket,
+                                                    self.get_dcp_replication_items_v2)
+            self.DCP_QUEUES = (
+                'ep_dcp_other_items_remaining',
+            )
+            self._wait_for_empty_queues(host, bucket, self.DCP_QUEUES,
+                                        self.get_bucket_stats)
+        elif self.build_version_number < (7, 0, 0, 3937):
+            self._wait_for_empty_queues(host, bucket, self.DCP_QUEUES,
+                                        self.get_bucket_stats)
+        else:
+            if self.test_config.bucket.replica_number != 0:
+                if self.build_version_number < (7, 0, 0, 4990):
+                    self._wait_for_empty_dcp_queues(host, bucket,
+                                                    self.get_dcp_replication_items)
+                else:
+                    self._wait_for_empty_dcp_queues(host, bucket,
+                                                    self.get_dcp_replication_items_v2)
+            self.DCP_QUEUES = (
+                'ep_dcp_other_items_remaining',
+            )
+            self._wait_for_empty_queues(host, bucket, self.DCP_QUEUES,
+                                        self.get_bucket_stats)
 
     def monitor_replica_count(self, host, bucket):
         logger.info('Monitoring replica count match: {}'.format(bucket))
@@ -228,6 +285,8 @@ class Monitor(RestHelper):
     def monitor_xdcr_queues(self, host: str, bucket: str):
         logger.info('Monitoring XDCR queues: {}'.format(bucket))
         self._wait_for_xdcr_to_start(host)
+        # adding temporary delay to make sure replication_changes_left stats arrives
+        time.sleep(20)
         self._wait_for_empty_queues(host, bucket, self.XDCR_QUEUES,
                                     self.get_xdcr_stats)
 
@@ -592,7 +651,7 @@ class Monitor(RestHelper):
         logger.interrupt('Some nodes are still down')
 
     def monitor_fts_indexing_queue(self, host: str, index: str, items: int):
-        logger.info('Waiting for indexing to finish')
+        logger.info('{} : Waiting for indexing to finish'.format(index))
         count = 0
         while count < items:
             count = self.get_fts_doc_count(host, index)
@@ -600,25 +659,30 @@ class Monitor(RestHelper):
             time.sleep(self.POLLING_INTERVAL)
 
     def monitor_fts_index_persistence(self, hosts: list, index: str, bkt: str = None):
-        logger.info('Waiting for index to be persisted')
+        logger.info('{}: Waiting for index to be persisted'.format(index))
         if not bkt:
             bkt = self.test_config.buckets[0]
+        tries = 0
         pending_items = 1
         while pending_items:
-            persist = 0
-            compact = 0
-            for host in hosts:
-                stats = self.get_fts_stats(host)
+            try:
+                persist = 0
+                compact = 0
+                for host in hosts:
+                    stats = self.get_fts_stats(host)
+                    metric = '{}:{}:{}'.format(bkt, index, 'num_recs_to_persist')
+                    persist += stats[metric]
 
-                metric = '{}:{}:{}'.format(bkt, index, 'num_recs_to_persist')
-                persist += stats[metric]
+                    metric = '{}:{}:{}'.format(bkt, index, 'total_compactions')
+                    compact += stats[metric]
 
-                metric = '{}:{}:{}'.format(bkt, index, 'total_compactions')
-                compact += stats[metric]
-
-            pending_items = persist or compact
-            logger.info('Records to persist: {:,}'.format(persist))
-            logger.info('Ongoing compactions: {:,}'.format(compact))
+                pending_items = persist or compact
+                logger.info('Records to persist: {:,}'.format(persist))
+                logger.info('Ongoing compactions: {:,}'.format(compact))
+            except KeyError:
+                tries += 1
+            if tries >= 10:
+                raise Exception("cannot get fts stats")
             time.sleep(self.POLLING_INTERVAL)
 
     def monitor_elastic_indexing_queue(self, host: str, index: str):
@@ -653,29 +717,95 @@ class Monitor(RestHelper):
                 logger.info('Failed to bootstrap function: {}, node: {}'.
                             format(function, node))
 
-    def get_num_analytics_items(self, data_node: str, bucket: str) -> int:
+    def get_num_analytics_items(self, analytics_node: str, bucket: str) -> int:
         stats_key = '{}:all:incoming_records_count_total'.format(bucket)
         num_items = 0
-        for node in self.get_active_nodes_by_role(data_node, 'cbas'):
+        for node in self.get_active_nodes_by_role(analytics_node, 'cbas'):
             stats = self.get_analytics_stats(node)
             num_items += stats.get(stats_key, 0)
         return num_items
 
-    def monitor_data_synced(self, data_node: str, bucket: str) -> int:
+    def get_ingestion_progress(self, analytics_node: str) -> int:
+        stats = self.get_ingestion_v2(analytics_node)
+        progress = 0
+        number_dataset = 0
+        for scope_state in stats["links"][0]["state"]:
+            progress += scope_state["progress"] * len(scope_state["scopes"][0]['collections'])
+            number_dataset += len(scope_state["scopes"][0]['collections'])
+        avg_progress = progress/number_dataset*100
+        return avg_progress
+
+    def get_num_remaining_mutations(self, analytics_node: str) -> int:
+        while True:
+            num_items = 0
+            try:
+                if self.build_version_number < (7, 0, 0, 4622):
+                    stats = self.get_pending_mutations(analytics_node)
+                    for dataset in stats['Default']:
+                        if self.build_version_number < (7, 0, 0, 4310):
+                            num_items += int(stats['Default'][dataset])
+                        else:
+                            num_items += int(stats['Default'][dataset]['seqnoLag'])
+                else:
+                    stats = self.get_pending_mutations_v2(analytics_node)
+                    for scope in stats['scopes']:
+                        for collection in scope['collections']:
+                            num_items += int(collection['seqnoLag'])
+                break
+            except Exception:
+                time.sleep(self.POLLING_INTERVAL_ANALYTICS)
+        return num_items
+
+    def monitor_data_synced(self, data_node: str, bucket: str, analytics_node: str) -> int:
         logger.info('Waiting for data to be synced from {}'.format(data_node))
+        time.sleep(self.MONITORING_DELAY * 3)
 
         num_items = self._get_num_items(data_node, bucket)
 
         while True:
-            num_analytics_items = self.get_num_analytics_items(data_node,
-                                                               bucket)
-            if num_analytics_items == num_items:
-                break
+            if self.build_version_number < (7, 0, 0, 0):
+                num_analytics_items = self.get_num_analytics_items(analytics_node, bucket)
+            else:
+                if self.build_version_number < (7, 0, 0, 4990):
+                    incoming_records = self.get_cbas_incoming_records_count(analytics_node)
+                else:
+                    incoming_records = self.get_cbas_incoming_records_count_v2(analytics_node)
+                num_analytics_items = int(incoming_records["data"][0]["values"][-1][1])
+
             logger.info('Analytics has {:,} docs (target is {:,})'.format(
                 num_analytics_items, num_items))
+
+            if self.build_version_number < (6, 5, 0, 0):
+                if num_analytics_items == num_items:
+                    break
+            else:
+                if self.build_version_number > (7, 0, 0, 4853):
+                    ingestion_progress = self.get_ingestion_progress(analytics_node)
+                    logger.info('Ingestion progress: {:.2f}%'.format(ingestion_progress))
+                    if int(ingestion_progress) == 100:
+                        break
+                else:
+                    num_remaining_mutations = self.get_num_remaining_mutations(analytics_node)
+                    logger.info('Number of remaining mutations: {}'.format(num_remaining_mutations))
+                    if num_remaining_mutations == 0:
+                        break
+
             time.sleep(self.POLLING_INTERVAL_ANALYTICS)
 
         return num_items
+
+    def monitor_dataset_drop(self, analytics_node: str, dataset: str):
+        while True:
+            statement = "SELECT COUNT(*) from `{}`;".format(dataset)
+            result = self.exec_analytics_query(analytics_node, statement)
+            num_analytics_items = result['results'][0]['$1']
+            logger.info("Number of items in dataset {}: {}".
+                        format(dataset, num_analytics_items))
+
+            if num_analytics_items == 0:
+                break
+
+            time.sleep(self.POLLING_INTERVAL)
 
     def wait_for_timer_event(self, node: str, function: str, event="timer_events"):
         logger.info('Waiting for timer events to start processing: {} '.format(function))
@@ -727,3 +857,144 @@ class Monitor(RestHelper):
             retry += 1
         if retry == self.MAX_RETRY_TIMER_EVENT:
             logger.info('Function {} failed to {}...!!!'.format(function, status))
+
+
+class KubernetesMonitor(KubernetesRestHelper):
+
+    MAX_RETRY = 150
+    MAX_RETRY_RECOVERY = 1200
+    MAX_RETRY_TIMER_EVENT = 18000
+    MAX_RETRY_BOOTSTRAP = 1200
+
+    MONITORING_DELAY = 5
+
+    POLLING_INTERVAL = 2
+    POLLING_INTERVAL_INDEXING = 1
+    POLLING_INTERVAL_MACHINE_UP = 10
+    POLLING_INTERVAL_ANALYTICS = 15
+    POLLING_INTERVAL_EVENTING = 1
+
+    REBALANCE_TIMEOUT = 3600 * 6
+    TIMEOUT = 3600 * 12
+
+    DISK_QUEUES = (
+        'ep_queue_size',
+        'ep_flusher_todo',
+        'ep_diskqueue_items',
+        'vb_active_queue_size',
+        'vb_replica_queue_size',
+    )
+
+    DCP_QUEUES = (
+        'ep_dcp_replica_items_remaining',
+        'ep_dcp_other_items_remaining',
+    )
+
+    XDCR_QUEUES = (
+        'replication_changes_left',
+    )
+
+    def __init__(self, cluster_spec, test_config, verbose):
+        super().__init__(cluster_spec=cluster_spec)
+        self.cluster_spec = cluster_spec
+        self.test_config = test_config
+
+    def is_index_ready(self, host: str) -> bool:
+        return True
+
+    def monitor_indexing(self, host):
+        logger.info('Monitoring indexing progress')
+
+        while not self.is_index_ready(host):
+            time.sleep(self.POLLING_INTERVAL_INDEXING * 5)
+            pending_docs = self.estimate_pending_docs(host)
+            logger.info('Pending docs: {:,}'.format(pending_docs))
+
+        logger.info('Indexing completed')
+
+    def estimate_pending_docs(self, host: str) -> int:
+        stats = self.get_gsi_stats(host)
+        pending_docs = 0
+        for metric, value in stats.items():
+            if 'num_docs_queued' in metric or 'num_docs_pending' in metric:
+                pending_docs += value
+        return pending_docs
+
+    def monitor_disk_queues(self, host, bucket):
+        logger.info('Monitoring disk queues: {}'.format(bucket))
+        self._wait_for_empty_queues(host, bucket, self.DISK_QUEUES,
+                                    self.get_bucket_stats)
+
+    def monitor_dcp_queues(self, host, bucket):
+        logger.info('Monitoring DCP queues: {}'.format(bucket))
+        self._wait_for_empty_queues(host, bucket, self.DCP_QUEUES,
+                                    self.get_bucket_stats)
+
+    def monitor_replica_count(self, host, bucket):
+        logger.info('Monitoring replica count match: {}'.format(bucket))
+        self._wait_for_replica_count_match(host, bucket)
+
+    def _wait_for_empty_queues(self, host, bucket, queues, stats_function):
+        metrics = list(queues)
+
+        start_time = time.time()
+        while metrics:
+            bucket_stats = stats_function(host, bucket)
+            # As we are changing metrics in the loop; take a copy of it to
+            # iterate over.
+            for metric in list(metrics):
+                stats = bucket_stats['op']['samples'].get(metric)
+                if stats:
+                    last_value = stats[-1]
+                    if last_value:
+                        logger.info('{} = {:,}'.format(metric, last_value))
+                        continue
+                    else:
+                        logger.info('{} reached 0'.format(metric))
+                    metrics.remove(metric)
+            if metrics:
+                time.sleep(self.POLLING_INTERVAL)
+            if time.time() - start_time > self.TIMEOUT:
+                raise Exception('Monitoring got stuck')
+
+    def _wait_for_replica_count_match(self, host, bucket):
+        start_time = time.time()
+        bucket_info = self.get_bucket_info(host, bucket)
+        replica_number = int(bucket_info['replicaNumber'])
+        while replica_number:
+            bucket_stats = self.get_bucket_stats(host, bucket)
+            curr_items = bucket_stats['op']['samples'].get("curr_items")[-1]
+            replica_curr_items = bucket_stats['op']['samples'].get("vb_replica_curr_items")[-1]
+            logger.info("curr_items: {}, replica_curr_items: {}".format(curr_items,
+                                                                        replica_curr_items))
+            if (curr_items * replica_number) == replica_curr_items:
+                break
+            time.sleep(self.POLLING_INTERVAL)
+            if time.time() - start_time > self.TIMEOUT:
+                raise Exception('Replica items monitoring got stuck')
+
+    def monitor_num_items(self, host: str, bucket: str, num_items: int):
+        logger.info('Checking the number of items in {}'.format(bucket))
+        retries = 0
+        while retries < self.MAX_RETRY:
+            curr_items = self._get_num_items(host, bucket, total=True)
+            if curr_items == num_items:
+                break
+            else:
+                logger.info('{}(curr_items) != {}(num_items)'.format(curr_items, num_items))
+            time.sleep(self.POLLING_INTERVAL)
+            retries += 1
+        else:
+            actual_items = self._get_num_items(host, bucket, total=True)
+            raise Exception('Mismatch in the number of items: {}'
+                            .format(actual_items))
+
+    def _get_num_items(self, host: str, bucket: str, total: bool = False) -> int:
+        stats = self.get_bucket_stats(host=host, bucket=bucket)
+        if total:
+            curr_items = stats['op']['samples'].get('curr_items_tot')
+        else:
+            curr_items = stats['op']['samples'].get('curr_items')
+        if curr_items:
+            return curr_items[-1]
+        return 0

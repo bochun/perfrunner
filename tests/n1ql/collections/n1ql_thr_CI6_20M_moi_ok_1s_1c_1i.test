@@ -41,18 +41,15 @@ creates = 0
 reads = 0
 updates = 100
 deletes = 0
-throughput = 30000
+throughput = 15000
 items = 20000000
 workers = 20
 time = 1200
 n1ql_queries = aggregation-query
-n1ql_workers = 180
+n1ql_workers = 120
+workload_instances = 2
 
 [n1ql-aggregation-query]
 statement = SELECT year, SUM(coins) AS coins FROM `bucket-1` WHERE capped_small > $1 AND capped_small < $2 GROUP BY year;
 scan_consistency = not_bounded
 args = ["{capped_small}","{capped_small_range}"]
-
-[clients]
-libcouchbase = 3.0.2
-python_client = git+http://review.couchbase.org/couchbase-python-client@refs/changes/91/135991/3

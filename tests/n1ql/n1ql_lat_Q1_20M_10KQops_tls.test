@@ -27,10 +27,14 @@ items = 20000000
 workers = 0
 n1ql_queries = key-value-lookup
 n1ql_throughput = 10000
-n1ql_workers = 200
+n1ql_workers = 120
 time = 1200
 ssl_mode = data
 
 [n1ql-key-value-lookup]
 statement = SELECT * FROM `bucket-1` USE KEYS[$1];
 args = ["{key}"]
+
+[clients]
+libcouchbase = 2.9.3
+python_client = 2.5.0

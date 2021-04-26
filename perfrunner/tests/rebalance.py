@@ -4,7 +4,9 @@ import dateutil.parser
 
 from logger import logger
 from perfrunner.helpers.cbmonitor import timeit, with_stats
+from perfrunner.helpers.profiler import with_profiles
 from perfrunner.tests import PerfTest
+from perfrunner.tests.fts import FTSTest
 from perfrunner.tests.views import QueryTest
 from perfrunner.tests.xdcr import DestTargetIterator, UniDirXdcrInitTest
 
@@ -97,6 +99,7 @@ class RebalanceTest(PerfTest):
         time.sleep(self.rebalance_settings.stop_after)
 
     @with_stats
+    @with_profiles
     def rebalance(self, services=None):
         self.pre_rebalance()
         self.rebalance_time = self._rebalance(services)
@@ -135,6 +138,7 @@ class RebalanceDurabilityTest(RebalanceTest):
     COLLECTORS = {'latency': True}
 
     @with_stats
+    @with_profiles
     def rebalance(self, services=None):
         self.access_bg()
         self.rebalance_time = self._rebalance(services)
@@ -158,18 +162,33 @@ class RebalanceDurabilityTest(RebalanceTest):
             self.report_kpi()
 
 
-class RebalanceBaselineForFTS(RebalanceTest):
+class RebalanceForFTS(RebalanceTest, FTSTest):
 
-    def load(self, *args):
-        logger.info('load/restore data to bucket')
-        self.remote.restore_without_index(self.test_config.fts_settings.storage,
-                                          self.test_config.fts_settings.repo)
+    ALL_HOSTNAMES = True
+    COLLECTORS = {'fts_stats': True, 'jts_stats': True}
+
+    def build_indexes(self):
+        elapsed_time = self.create_fts_indexes()
+        return elapsed_time
 
     def run(self):
-        self.load()
+        self.cleanup_and_restore()
         self.wait_for_persistence()
+        self.create_fts_index_definitions()
+        fts_nodes_before = self.add_extra_fts_parameters()
 
-        self.rebalance()
+        logger.info("Sleeping for 10s before the index creation")
+        time.sleep(10)
+        total_index_time = self.build_indexes()
+        logger.info("Total index build time: {} seconds".format(total_index_time))
+
+        self.wait_for_index_persistence(fts_nodes=fts_nodes_before)
+
+        total_index_size_bytes = self.calculate_index_size()
+        logger.info("Total index size: {} MB".format(int(total_index_size_bytes / (1024 ** 2))))
+
+        self.rebalance(services="fts")
+        logger.info("Total rebalance time: {} seconds".format(self.rebalance_time))
 
         if self.is_balanced():
             self.report_kpi()
@@ -465,3 +484,29 @@ class RebalanceWithXdcrInitTest(RebalanceTest, UniDirXdcrInitTest):
 
         time_elapsed = self.init_xdcr()
         self.report_kpi(time_elapsed)
+
+
+class RebalanceLoadOnlyTest(RebalanceTest):
+
+    ALL_HOSTNAMES = True
+
+    def run(self):
+        self.load()
+
+        self.wait_for_persistence()
+
+        self.rebalance()
+
+        if self.is_balanced():
+            self.report_kpi()
+
+
+class RebalanceMultiBucketKVTest(RebalanceKVTest):
+
+    ALL_BUCKETS = True
+
+    COLLECTORS = {
+        'iostat': True,
+        'memory': True,
+        'ns_server_system': True,
+        'latency': True}

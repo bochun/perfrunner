@@ -15,10 +15,11 @@ class YCSBTest(PerfTest):
 
     def download_ycsb(self):
         if self.worker_manager.is_remote:
-            self.remote.init_ycsb(repo=self.test_config.ycsb_settings.repo,
-                                  branch=self.test_config.ycsb_settings.branch,
-                                  worker_home=self.worker_manager.WORKER_HOME,
-                                  sdk_version=self.test_config.ycsb_settings.sdk_version)
+            self.remote.init_ycsb(
+                    repo=self.test_config.ycsb_settings.repo,
+                    branch=self.test_config.ycsb_settings.branch,
+                    worker_home=self.worker_manager.WORKER_HOME,
+                    sdk_version=self.test_config.ycsb_settings.sdk_version)
         else:
             local.clone_git_repo(repo=self.test_config.ycsb_settings.repo,
                                  branch=self.test_config.ycsb_settings.branch)
@@ -36,6 +37,7 @@ class YCSBTest(PerfTest):
     @with_profiles
     def access(self, *args, **kwargs):
         PerfTest.access(self, task=ycsb_task)
+        self.wait_for_persistence()
 
     def access_bg(self, *args, **kwargs):
         PerfTest.access_bg(self, task=ycsb_task)
@@ -71,8 +73,11 @@ class YCSBTest(PerfTest):
         self.download_ycsb()
 
         self.load()
-        self.wait_for_persistence()
-        self.check_num_items()
+        if self.dynamic_infra:
+            time.sleep(30)
+        else:
+            self.wait_for_persistence()
+            self.check_num_items()
 
         if self.test_config.access_settings.cbcollect:
             self.access_bg()

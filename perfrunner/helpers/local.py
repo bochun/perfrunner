@@ -544,7 +544,9 @@ def run_ycsb(host: str,
              ycsb_jvm_args: str = None,
              collections_map: dict = None,
              out_of_order: int = 0,
-             phase_params: dict = None):
+             phase_params: dict = None,
+             insert_test_params: dict = None,
+             cloud: bool = None):
 
     cmd = 'bin/ycsb {action} {ycsb_client} ' \
           '-P {workload} ' \
@@ -570,6 +572,8 @@ def run_ycsb(host: str,
           '-p couchbase.retryLower={retry_lower} ' \
           '-p couchbase.retryUpper={retry_upper} ' \
           '-p couchbase.retryFactor={retry_factor} '
+
+    cmd = 'pyenv local system && ' + cmd
 
     if durability is None:
         cmd += '-p couchbase.persistTo={persist_to} '
@@ -635,13 +639,17 @@ def run_ycsb(host: str,
                      ycsb_jvm_args=ycsb_jvm_args)
 
     if soe_params is None:
-        if phase_params is None:
-            cmd += ' -p recordcount={items} '.format(items=items)
-        else:
+        if phase_params:
             cmd += ' -p totalrecordcount={totalrecordcount} '.format(totalrecordcount=items)
             cmd += ' -p recordcount={items} '.format(
                 items=phase_params['inserts_per_workerinstance'])
             cmd += ' -p insertstart={insertstart} '.format(insertstart=phase_params['insertstart'])
+        elif insert_test_params:
+            cmd += ' -p recordcount={items} '.format(items=insert_test_params['recordcount'])
+            cmd += ' -p insertstart={insertstart} '.format(
+                insertstart=insert_test_params['insertstart'])
+        else:
+            cmd += ' -p recordcount={items} '.format(items=items)
     else:
         cmd += ' -p totalrecordcount={totalrecordcount} '.format(totalrecordcount=items)
         cmd += ' -p recordcount={items} '.format(items=soe_params['recorded_load_cache_size'])
@@ -753,7 +761,7 @@ def restart_memcached(mem_limit: int = 10000, port: int = 8000):
         else:
             logger.info('memcached still running')
     else:
-        raise Exception('memcached was not kill properly')
+        raise Exception('memcached was not killed properly')
 
     cmd2 = 'memcached -u root -m {mem_limit} -l localhost -p {port} -d'
     cmd2 = cmd2.format(mem_limit=mem_limit, port=port)
@@ -800,8 +808,10 @@ def kill_process(process: str):
 
 def start_celery_worker(queue: str):
     with shell_env(PYTHONOPTIMIZE='1', PYTHONWARNINGS='ignore', C_FORCE_ROOT='1'):
-        local('nohup env/bin/celery worker '
-              '-A perfrunner.helpers.worker -Q {} > worker.log &'.format(queue))
+        local('WORKER_TYPE=local '
+              'BROKER_URL=sqla+sqlite:///perfrunner.db '
+              'nohup env/bin/celery worker '
+              '-A perfrunner.helpers.worker -l INFO -Q {} > worker.log &'.format(queue))
 
 
 def clone_git_repo(repo: str, branch: str, commit: str = None):
@@ -956,4 +966,142 @@ def cbepctl(master_node: str, cluster_spec: ClusterSpec, bucket: str,
         ' '.join(flags))
 
     logger.info('Running: {}'.format(cmd))
+    local(cmd)
+
+
+def create_remote_link(analytics_link, data_node, analytics_node):
+    logger.info('Create analytics remote ink')
+    cmd = "curl -v -u Administrator:password " \
+          "-X POST http://{}:8095/analytics/link " \
+          "-d dataverse=Default " \
+          "-d name={} " \
+          "-d type=couchbase " \
+          "-d hostname={}:8091 " \
+          "-d username=Administrator " \
+          "-d password=password " \
+          "-d encryption=none ".format(analytics_node, analytics_link, data_node)
+    local(cmd)
+
+
+def download_pytppc(repo: str, branch: str):
+    cmd = 'git clone -q -b {} {}'.format(branch, repo)
+    local(cmd)
+
+
+def pytpcc_create_collections(collection_config: str, master_node:  str):
+
+    cmd = 'cp py-tpcc/pytpcc/constants.py.collections py-tpcc/pytpcc/constants.py'
+    logger.info("Copyied constants.py.collections {}".format(cmd))
+
+    local(cmd)
+    cmd = './py-tpcc/pytpcc/util/{} {}'.format(collection_config, master_node)
+
+    logger.info("Creating Collections : {}".format(cmd))
+    local(cmd)
+
+
+def pytpcc_create_indexes(master_node: str, run_sql_shell: str, cbrindex_sql: str,
+                          port: str, index_replica: int):
+
+    cmd = './py-tpcc/pytpcc/util/{} {}:{} {} ' \
+          '< ./py-tpcc/pytpcc/util/{} '.format(run_sql_shell, master_node, port,
+                                               index_replica, cbrindex_sql)
+
+    logger.info("Creating pytpcc Indexes : {}".format(cmd))
+
+    local(cmd)
+
+
+def pytpcc_load_data(warehouse: int, client_threads: int,
+                     master_node: str, port: str,
+                     cluster_spec: ClusterSpec,
+                     multi_query_node: bool,
+                     driver: str,
+                     nodes: list):
+
+    if multi_query_node:
+        nodes_length = len(nodes)
+        multi_query_url = master_node + ':' + port
+
+        for node in range(1, nodes_length):
+            multi_query_url = multi_query_url + ',' + nodes[node] + ':' + port
+
+        cmd = './tpcc.py --warehouses {}' \
+              ' --clients {} {} --no-execute --query-url {}:{}' \
+              ' --multi-query-url {}' \
+              ' --userid {} --password {}'.format(warehouse, client_threads, driver,
+                                                  master_node,
+                                                  port,
+                                                  multi_query_url,
+                                                  cluster_spec.rest_credentials[0],
+                                                  cluster_spec.rest_credentials[1])
+    else:
+
+        cmd = './tpcc.py --warehouses {}' \
+              ' --clients {} {} --no-execute --query-url {}:{}' \
+              ' --userid {} --password {}'.format(warehouse, client_threads, driver,
+                                                  master_node,
+                                                  port,
+                                                  cluster_spec.rest_credentials[0],
+                                                  cluster_spec.rest_credentials[1])
+
+    logger.info("Loading Docs : {}".format(cmd))
+
+    with lcd('py-tpcc/pytpcc/'):
+
+        for line in local(cmd, capture=True).split('\n'):
+            print(line)
+
+
+def pytpcc_run_task(warehouse: int, duration: int, client_threads: int,
+                    driver: str, master_node:  str,
+                    multi_query_node: bool, cluster_spec: ClusterSpec, port: str,
+                    nodes: list, durability_level: str, scan_consistency: str, txtimeout: str):
+
+    if multi_query_node:
+        nodes_length = len(nodes)
+        multi_query_url = master_node + ':' + port
+
+        for node in range(1, nodes_length):
+            multi_query_url = multi_query_url + ',' + nodes[node] + ':' + port
+
+        cmd = './tpcc.py --warehouses {} --duration {} ' \
+              '--clients {} {} --query-url {}:{} ' \
+              '--multi-query-url {} --userid {} --no-load --durability_level {} ' \
+              '--password {} --scan_consistency {}' \
+              ' --txtimeout {} > pytpcc_run_result.log'.format(warehouse,
+                                                               duration,
+                                                               client_threads, driver,
+                                                               master_node, port,
+                                                               multi_query_url,
+                                                               cluster_spec.rest_credentials[0],
+                                                               durability_level,
+                                                               cluster_spec.rest_credentials[1],
+                                                               scan_consistency, txtimeout)
+
+    else:
+        cmd = './tpcc.py --warehouses {} --duration {} ' \
+              '--clients {} {} --query-url {}:{} ' \
+              '--no-load --userid {} --password {} --durability_level {} ' \
+              '--scan_consistency {} ' \
+              '--txtimeout {} > pytpcc_run_result.log'.format(warehouse,
+                                                              duration,
+                                                              client_threads,
+                                                              driver,
+                                                              master_node,
+                                                              port,
+                                                              cluster_spec.rest_credentials[0],
+                                                              cluster_spec.rest_credentials[1],
+                                                              durability_level,
+                                                              scan_consistency, txtimeout)
+
+    logger.info("Running : {}".format(cmd))
+
+    with lcd('py-tpcc/pytpcc/'):
+        for line in local(cmd, capture=True).split('\n'):
+            print(line)
+
+
+def copy_pytpcc_run_output():
+    cmd = 'cp  py-tpcc/pytpcc/pytpcc_run_result.log .'
     local(cmd)

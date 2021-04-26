@@ -6,6 +6,7 @@ use_workers = 0
 title = Rebalance-out (min), 4 -> 3 nodes, BigFUN 20M users (320M docs), SSD, s=1 c=3
 component = analytics
 category = rebalance
+orderby = _out_ssd_3
 
 [stats]
 server_processes = java
@@ -21,6 +22,7 @@ config = collections/1bucket_1scope_3collections_analytics.json
 
 [analytics]
 num_io_devices = 4
+analytics_config_file = tests/analytics/config/3_datasets_collection_config.json
 
 [bucket]
 eviction_policy = fullEviction
@@ -29,7 +31,7 @@ eviction_policy = fullEviction
 backup_storage = /data2/backup/3collections/
 backup_repo = default
 threads = 8
-map_data = bucket-1.scope-1.GleambookUsers=bucket-1.scope-1.GleambookUsers,bucket-1.scope-1.GleambookMessages=bucket-1.scope-1.GleambookMessages,bucket-1.scope-1.ChirpMessages=bucket-1.scope-1.ChirpMessages
+map_data = bucket-1.scope-1.GleambookUsers=bucket-1.scope-1.GleambookUsers-1,bucket-1.scope-1.GleambookMessages=bucket-1.scope-1.GleambookMessages-1,bucket-1.scope-1.ChirpMessages=bucket-1.scope-1.ChirpMessages-1
 
 [rebalance]
 nodes_after = 5

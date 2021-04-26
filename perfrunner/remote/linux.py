@@ -1,4 +1,5 @@
 import os
+import time
 from collections import defaultdict
 from typing import Dict, List
 from urllib.parse import urlparse
@@ -28,6 +29,10 @@ class RemoteLinux(Remote):
                  'moxi', 'spring', 'sync_gateway')
 
     PROCESS_PATTERNS = ('cbas', )
+
+    LINUX_PERF_PROFILES_PATH = '/opt/couchbase/var/lib/couchbase/logs/'
+
+    LINUX_PERF_DELAY = 30
 
     @property
     def package(self):
@@ -392,7 +397,7 @@ class RemoteLinux(Remote):
             '/opt/couchbase/etc/couchbase/static_config')
 
     @master_server
-    def restore_data(self, archive_path: str, repo_path: str):
+    def restore_data(self, archive_path: str, repo_path: str, map_data: str=None):
         cmd = \
             "/opt/couchbase/bin/cbbackupmgr restore " \
             "--archive {} --repo {} --threads 24 " \
@@ -403,13 +408,16 @@ class RemoteLinux(Remote):
                 repo_path,
             )
 
+        if map_data:
+            cmd += " --map-data {}".format(map_data)
+
         logger.info("Running: {}".format(cmd))
         run(cmd)
 
     @master_server
-    def export_data(self, num_collections, collection_prefix, scope, name_of_backup):
+    def export_data(self, num_collections, collection_prefix, scope_prefix, scope, name_of_backup):
         logger.info("Loading data into the collections")
-        scope_name = "scope" + str(scope)
+        scope_name = scope_prefix + str(scope)
         name_of_backup = "/fts/backup/exportFiles/" + name_of_backup + ".json"
         cmd = "python3 /fts/backup/exportFiles/splitData.py --num_col {} " \
               "--collection_prefix {} " \
@@ -532,7 +540,7 @@ class RemoteLinux(Remote):
     @servers_by_role(roles=['index'])
     def kill_process_on_index_node(self, process):
         logger.info('Killing following process on index node: {}'.format(process))
-        run("killall {}".format(process))
+        run("killall {}".format(process), quiet=True)
 
     def change_owner(self, host, path, owner='couchbase'):
         with settings(host_string=host):
@@ -596,6 +604,25 @@ class RemoteLinux(Remote):
         logger.info('Enabling IPv6')
         run('sed -i "s/{ipv6, false}/{ipv6, true}/" '
             '/opt/couchbase/etc/couchbase/static_config')
+
+    @all_servers
+    def update_ip_family_cli(self):
+        logger.info('Updating IP family')
+        cmd = \
+            "/opt/couchbase/bin/couchbase-cli ip-family "\
+            "-c http://localhost:8091 -u Administrator "\
+            "-p password --set --ipv6"
+        logger.info("Running: {}".format(cmd))
+        run(cmd)
+
+    @all_servers
+    def update_ip_family_rest(self):
+        logger.info('Updating IP family')
+        cmd = \
+            "curl -u Administrator:password -d 'afamily=ipv6' " \
+            "http://localhost:8091/node/controller/setupNetConfig"
+        logger.info("Running: {}".format(cmd))
+        run(cmd)
 
     @all_servers
     def setup_x509(self):
@@ -790,3 +817,72 @@ class RemoteLinux(Remote):
 
             logger.info('Running: {}'.format(cmd))
             run(cmd)
+
+    @all_servers
+    def install_cb_debug_rpm(self, url):
+        logger.info('Installing Couchbase Debug rpm on all servers')
+        run('rpm -iv {}'.format(url), quiet=True)
+
+    @all_servers
+    def generate_linux_perf_script(self):
+
+        files_list = 'for i in {}*_perf.data; do echo $i; ' \
+                     'done'.format(self.LINUX_PERF_PROFILES_PATH)
+        files = run(files_list).replace("\r", "").split("\n")
+
+        for filename in files:
+            fname = filename.split('/')[-1]
+            if fname != '*_perf.data':
+                cmd_perf_script = 'perf script -i {}' \
+                                ' --no-inline > {}.txt'.format(filename, filename)
+
+                logger.info('Generating linux script data : {}'.format(cmd_perf_script))
+                try:
+
+                    with settings(warn_only=True):
+                        run(cmd_perf_script, timeout=600, pty=False)
+                        time.sleep(self.LINUX_PERF_DELAY)
+
+                except CommandTimeout:
+                    logger.error('linux perf script timed out')
+
+                cmd_zip = 'cd {}; zip -q {}.zip {}.txt'.format(self.LINUX_PERF_PROFILES_PATH,
+                                                               fname,
+                                                               fname)
+
+                with settings(warn_only=True):
+                    run(cmd_zip, pty=False)
+
+    @all_servers
+    def get_linuxperf_files(self):
+
+        logger.info('Collecting linux perf files from kv nodes')
+        with cd(self.LINUX_PERF_PROFILES_PATH):
+            r = run('stat *.zip', quiet=True, warn_only=True)
+            if not r.return_code:
+                get('*.zip', local_path='.')
+
+    @all_servers
+    def txn_query_cleanup(self, timeout):
+        logger.info('Running txn cleanup window')
+
+        cmd = \
+            "curl -s -u Administrator:password http://localhost:8091/" \
+            "settings/querySettings  -d 'queryCleanupWindow={}s'".format(timeout)
+
+        logger.info("Running: {}".format(cmd))
+        run(cmd, pty=False)
+
+        cmd2 = "curl -u Administrator:password http://localhost:8093/admin/settings" \
+               " -XPOST -d '{\"atrcollection\":\"default._default._default\"}'"
+
+        logger.info("Running: {}".format(cmd2))
+
+        with settings(warn_only=True):
+            run(cmd2, pty=False)
+
+    @master_server
+    def enable_developer_preview(self):
+        logger.info('Enabling developer preview')
+        run("curl -X POST -u Administrator:password "
+            "localhost:8091/settings/developerPreview -d 'enabled=true'", pty=False)

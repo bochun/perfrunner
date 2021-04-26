@@ -7,7 +7,7 @@ title = 2 nodes, BigFUN 20M users (320M docs), SSD
 component = analytics
 category = latency
 sub_category = With Index
-orderby = _ssd
+orderby = _ssd_2n
 
 [stats]
 server_processes = java
@@ -20,6 +20,7 @@ num_buckets = 1
 
 [analytics]
 num_io_devices = 4
+queries = perfrunner/workloads/bigfun/queries_with_index.json
 
 [bucket]
 eviction_policy = fullEviction
@@ -34,3 +35,7 @@ analytics_warmup_ops = 10
 analytics_warmup_workers = 1
 ops = 30
 workers = 1
+
+[clients]
+libcouchbase = 2.9.3
+python_client = 2.5.0

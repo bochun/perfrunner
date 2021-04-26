@@ -355,6 +355,7 @@ class KVTest(PerfTest):
 
         if self.test_config.extra_access_settings.run_extra_access:
             self.run_extra_access()
+            self.wait_for_persistence()
 
         self.hot_load()
         self.reset_kv_stats()
@@ -397,6 +398,7 @@ class CompactionMagmaTest(StabilityBootstrap):
 
         if self.test_config.extra_access_settings.run_extra_access:
             self.run_extra_access()
+            self.wait_for_persistence()
 
         self.hot_load()
         self.reset_kv_stats()
@@ -461,6 +463,7 @@ class SingleNodeThroughputDGMMagmaTest(ThroughputDGMMagmaTest):
 
         if self.test_config.extra_access_settings.run_extra_access:
             self.run_extra_access()
+            self.wait_for_persistence()
 
         self.COLLECTORS["kvstore"] = False
         self.COLLECTORS["disk"] = False
@@ -487,6 +490,39 @@ class SingleNodeThroughputDGMMagmaTest(ThroughputDGMMagmaTest):
             option="mem_high_wat",
             value=self.test_config.load_settings.mem_high_wat
         )
+
+        self.hot_load()
+        self.reset_kv_stats()
+
+        self.access()
+
+        self.report_kpi()
+
+
+class SingleNodeMixedLatencyDGMTest(SingleNodeThroughputDGMMagmaTest):
+
+    def _report_kpi(self):
+        for operation in ('get', 'set'):
+            self.reporter.post(
+                *self.metrics.kv_latency(operation=operation)
+            )
+
+    def run(self):
+        self.load()
+
+        if self.test_config.extra_access_settings.run_extra_access:
+            self.run_extra_access()
+            self.wait_for_persistence()
+
+        self.COLLECTORS["kvstore"] = False
+        self.COLLECTORS["disk"] = False
+        self.COLLECTORS["latency"] = False
+        self.COLLECTORS["vmstat"] = False
+        self.restart()
+        self.COLLECTORS["kvstore"] = True
+        self.COLLECTORS["disk"] = True
+        self.COLLECTORS["latency"] = True
+        self.COLLECTORS["vmstat"] = True
 
         self.hot_load()
         self.reset_kv_stats()
@@ -557,6 +593,7 @@ class PillowFightDGMTest(StabilityBootstrap):
 
         if self.test_config.extra_access_settings.run_extra_access:
             self.run_extra_access()
+            self.wait_for_persistence()
 
         self.reset_kv_stats()
 
@@ -598,6 +635,7 @@ class WarmupDGMTest(StabilityBootstrap):
 
         if self.test_config.extra_access_settings.run_extra_access:
             self.run_extra_access()
+            self.wait_for_persistence()
 
         self.reset_kv_stats()
 
@@ -648,6 +686,7 @@ class YCSBThroughputHIDDTest(YCSBThroughputTest, KVTest):
 
         if self.test_config.extra_access_settings.run_extra_access:
             self.run_extra_access()
+            self.wait_for_persistence()
 
         self.reset_kv_stats()
         KVTest.save_stats(self)
@@ -885,6 +924,7 @@ class RebalanceKVDGMTest(RebalanceKVTest, StabilityBootstrap):
 
         if self.test_config.extra_access_settings.run_extra_access:
             StabilityBootstrap.run_extra_access(self)
+            self.wait_for_persistence()
 
         StabilityBootstrap.hot_load(self)
 
@@ -914,6 +954,7 @@ class BackupTestDGM(BackupTest):
 
         if self.test_config.extra_access_settings.run_extra_access:
             self.run_extra_access()
+            self.wait_for_persistence()
 
         time_elapsed = self.backup()
 

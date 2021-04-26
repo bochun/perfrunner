@@ -2,7 +2,7 @@
 test = perfrunner.tests.magma.ThroughputDGMMagmaTest
 
 [showfast]
-title = Avg Throughput (ops/sec), 4 nodes, 1 bucket x 1B x 1KB, 20/80 R/W, Uniform distribution, Magma
+title = Avg Throughput (ops/sec), 4 nodes, 1 bucket x 1B x 1KB, 20/80 R/W, Uniform distribution, 2%% Resident Ratio, Magma
 component = hidd
 category = ops
 
@@ -54,3 +54,7 @@ items = 1000000000
 workers = 128
 time = 3600
 requestdistribution = uniform
+
+[clients]
+libcouchbase = 2.9.3
+python_client = 2.5.0

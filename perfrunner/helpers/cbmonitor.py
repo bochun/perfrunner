@@ -17,6 +17,7 @@ from cbagent.collectors import (
     DurabilityLatency,
     ElasticStats,
     EventingConsumerStats,
+    EventingPerHandlerStats,
     EventingPerNodeStats,
     EventingStats,
     FTSCollector,
@@ -73,12 +74,14 @@ def new_cbagent_settings(test: PerfTest):
     if hasattr(test, 'ALL_BUCKETS'):
         buckets = None
     else:
-        buckets = test.test_config.buckets[:1]
+        buckets = test.test_config.buckets[:1] +\
+                  test.test_config.eventing_buckets +\
+                  test.test_config.eventing_metadata_bucket
+
     if hasattr(test, 'ALL_HOSTNAMES'):
         hostnames = test.cluster_spec.servers
     else:
         hostnames = None
-
     settings = type('settings', (object,), {
         'cbmonitor_host': CBMONITOR_HOST,
         'interval': test.test_config.stats_settings.interval,
@@ -92,12 +95,16 @@ def new_cbagent_settings(test: PerfTest):
         'traced_processes': test.test_config.stats_settings.traced_processes,
         'bucket_password': test.test_config.bucket.password,
         'workers': test.cluster_spec.workers,
+        'cloud': {"enabled": False}
     })()
 
     settings.ssh_username, settings.ssh_password = \
         test.cluster_spec.ssh_credentials
     settings.rest_username, settings.rest_password = \
         test.cluster_spec.rest_credentials
+
+    if test.dynamic_infra:
+        settings.cloud = {"enabled": True, "cloud_rest": test.rest}
 
     if test.test_config.collection.collection_map:
         settings.collections = test.test_config.collection.collection_map
@@ -117,7 +124,6 @@ class CbAgent:
     def __init__(self, test: PerfTest, phase: str):
         self.test = test
         self.settings = new_cbagent_settings(test=test)
-
         if self.test.test_config.stats_settings.enabled:
             self.init_clusters(phase=phase)
             self.add_collectors(**test.COLLECTORS)
@@ -185,82 +191,76 @@ class CbAgent:
         major = int(split_version[0])
         minor = int(split_version[1])
 
-        if (major == 6 and minor < 6) or (major < 6):
+        if (major == 6 and minor < 6) or (major < 6 and major != 0):
             self.add_collector(NSServerOverview)
-
-        if self.test.remote.os != 'Cygwin':
-            self.add_collector(PS)
-            self.add_collector(Sysdig)
-            if memory:
-                self.add_collector(Memory)
-            if net:
-                self.add_collector(Net)
-            if disk:
-                self.add_io_collector(Disk)
-            if iostat:
-                self.add_io_collector(IO)
-            if page_cache:
-                self.add_io_collector(PageCache)
-            if vmstat:
-                self.add_collector(VMSTAT)
-        else:
-            self.add_collector(TypePerf)
 
         if latency:
             self.add_collector(KVLatency)
-        if durability:
-            self.add_durability_collector()
-
         if query_latency or n1ql_latency:
             self.add_collector(QueryLatency)
         if n1ql_stats:
             self.add_collector(N1QLStats)
-
-        if index_latency:
-            self.add_collector(ObserveIndexLatency)
-
-        if eventing_stats:
-            self.add_collector(EventingStats, self.test)
-            self.add_collector(EventingPerNodeStats, self.test)
-            self.add_collector(EventingConsumerStats, self.test)
-
         if ns_server_system:
             self.add_collector(NSServerSystem)
-
-        if fts_stats:
-            self.add_collector(FTSCollector, self.test)
-        if elastic_stats:
-            self.add_collector(ElasticStats, self.test)
-        if jts_stats:
-            self.add_collector(JTSCollector, self.test)
-
-        if secondary_debugstats:
-            self.add_collector(SecondaryDebugStats)
-        if secondary_debugstats_bucket:
-            self.add_collector(SecondaryDebugStatsBucket)
-        if secondary_debugstats_index:
-            self.add_collector(SecondaryDebugStatsIndex)
-        if secondary_index_latency:
-            self.add_collector(ObserveSecondaryIndexLatency)
-        if secondary_latency:
-            self.add_collector(SecondaryLatencyStats)
-        if secondary_stats:
-            self.add_collector(SecondaryStats)
-        if secondary_storage_stats:
-            self.add_collector(SecondaryStorageStats)
-        if secondary_storage_stats_mm:
-            self.add_collector(SecondaryStorageStatsMM)
-
         if xdcr_lag:
             self.add_xdcr_lag()
         if xdcr_stats:
             self.add_collector(XdcrStats)
-
         if analytics:
-            self.add_collector(AnalyticsStats, self.test.analytics_nodes)
-
+            self.add_collector(AnalyticsStats, self.test)
         if kvstore:
             self.add_collector(KVStoreStats, self.test)
+
+        if not self.test.dynamic_infra:
+            if self.test.remote.os != 'Cygwin':
+                self.add_collector(PS)
+                self.add_collector(Sysdig)
+                if memory:
+                    self.add_collector(Memory)
+                if net:
+                    self.add_collector(Net)
+                if disk:
+                    self.add_io_collector(Disk)
+                if iostat:
+                    self.add_io_collector(IO)
+                if page_cache:
+                    self.add_io_collector(PageCache)
+                if vmstat:
+                    self.add_collector(VMSTAT)
+            else:
+                self.add_collector(TypePerf)
+
+            if durability:
+                self.add_durability_collector()
+            if index_latency:
+                self.add_collector(ObserveIndexLatency)
+            if eventing_stats:
+                self.add_collector(EventingStats, self.test)
+                self.add_collector(EventingPerNodeStats, self.test)
+                self.add_collector(EventingConsumerStats, self.test)
+                self.add_collector(EventingPerHandlerStats, self.test)
+            if fts_stats:
+                self.add_collector(FTSCollector, self.test)
+            if elastic_stats:
+                self.add_collector(ElasticStats, self.test)
+            if jts_stats:
+                self.add_collector(JTSCollector, self.test)
+            if secondary_debugstats:
+                self.add_collector(SecondaryDebugStats)
+            if secondary_debugstats_bucket:
+                self.add_collector(SecondaryDebugStatsBucket)
+            if secondary_debugstats_index:
+                self.add_collector(SecondaryDebugStatsIndex)
+            if secondary_index_latency:
+                self.add_collector(ObserveSecondaryIndexLatency)
+            if secondary_latency:
+                self.add_collector(SecondaryLatencyStats)
+            if secondary_stats:
+                self.add_collector(SecondaryStats)
+            if secondary_storage_stats:
+                self.add_collector(SecondaryStorageStats)
+            if secondary_storage_stats_mm:
+                self.add_collector(SecondaryStorageStatsMM)
 
     def add_collector(self, cls, *args):
         for cluster_id, master_node in self.cluster_map.items():

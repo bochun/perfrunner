@@ -1,3 +1,5 @@
+import json
+import random
 import time
 from typing import List, Tuple
 
@@ -20,98 +22,135 @@ class BigFunTest(PerfTest):
         super().__init__(*args, **kwargs)
 
         self.num_items = 0
+        self.config_file = self.test_config.analytics_settings.analytics_config_file
+        self.analytics_link = self.test_config.analytics_settings.analytics_link
+        if self.analytics_link == "Local":
+            self.data_node = self.master_node
+            self.analytics_node = self.analytics_nodes[0]
+        else:
+            self.data_node, self.analytics_node = self.cluster_spec.masters
 
     def create_datasets(self, bucket: str):
         self.disconnect_link()
         logger.info('Creating datasets')
         for dataset, key in (
-            ('GleambookUsers', 'id'),
-            ('GleambookMessages', 'message_id'),
-            ('ChirpMessages', 'chirpid'),
+            ('GleambookUsers-1', 'id'),
+            ('GleambookMessages-1', 'message_id'),
+            ('ChirpMessages-1', 'chirpid'),
         ):
-            statement = "CREATE DATASET `{}` ON `{}` WHERE `{}` IS NOT UNKNOWN;"\
-                .format(dataset, bucket, key)
-            self.rest.exec_analytics_statement(self.analytics_nodes[0],
+            statement = "CREATE DATASET `{}` ON `{}` AT `{}` WHERE `{}` IS NOT UNKNOWN;"\
+                .format(dataset, bucket, self.analytics_link, key)
+            self.rest.exec_analytics_statement(self.analytics_node,
                                                statement)
 
     def create_datasets_collections(self, bucket: str):
         self.disconnect_link()
         logger.info('Creating datasets')
-        collection_list = ['GleambookUsers', 'GleambookMessages', 'ChirpMessages']
-        for collection in collection_list:
-            statement = "CREATE DATASET `{}` ON `{}`.`scope-1`.`{}`;"\
-                .format(collection, bucket, collection)
-            self.rest.exec_analytics_statement(self.analytics_nodes[0],
-                                               statement)
+        with open(self.config_file, "r") as jsonFile:
+            analytics_config = json.load(jsonFile)
+        dataset_list = analytics_config["Analytics"]
+        if analytics_config["DefaultCollection"]:
+            for dataset in dataset_list:
+                statement = "CREATE DATASET `{}` ON `{}` AT `{}` " \
+                            "WHERE `type` = \"{}\" and meta().id like \"%-{}\";"\
+                    .format(dataset["Dataset"], bucket, self.analytics_link,
+                            dataset["Type"], dataset["Group"])
+                self.rest.exec_analytics_statement(self.analytics_node, statement)
+        else:
+            for dataset in dataset_list:
+                statement = "CREATE DATASET `{}` ON `{}`.`scope-1`.`{}` AT `{}`;"\
+                    .format(dataset["Dataset"], bucket, dataset["Collection"], self.analytics_link)
+                self.rest.exec_analytics_statement(self.analytics_node, statement)
 
     def create_index(self):
         logger.info('Creating indexes')
         for statement in (
-            "CREATE INDEX usrSinceIdx   ON `GleambookUsers`(user_since: string);",
-            "CREATE INDEX gbmSndTimeIdx ON `GleambookMessages`(send_time: string);",
-            "CREATE INDEX cmSndTimeIdx  ON `ChirpMessages`(send_time: string);",
+            "CREATE INDEX usrSinceIdx   ON `GleambookUsers-1`(user_since: string);",
+            "CREATE INDEX gbmSndTimeIdx ON `GleambookMessages-1`(send_time: string);",
+            "CREATE INDEX cmSndTimeIdx  ON `ChirpMessages-1`(send_time: string);",
         ):
-            self.rest.exec_analytics_statement(self.analytics_nodes[0],
+            self.rest.exec_analytics_statement(self.analytics_node,
                                                statement)
+
+    def create_index_collections(self):
+        logger.info('Creating indexes')
+        with open(self.config_file, "r") as jsonFile:
+            analytics_config = json.load(jsonFile)
+        index_list = analytics_config["Analytics"]
+
+        for index in index_list:
+            statement = "CREATE INDEX `{}` ON `{}`({}: string);"\
+                .format(index["Index"], index["Dataset"], index["Field"])
+            self.rest.exec_analytics_statement(self.analytics_node, statement)
 
     def disconnect_bucket(self, bucket: str):
         logger.info('Disconnecting the bucket: {}'.format(bucket))
         statement = 'DISCONNECT BUCKET `{}`;'.format(bucket)
-        self.rest.exec_analytics_statement(self.analytics_nodes[0],
+        self.rest.exec_analytics_statement(self.analytics_node,
                                            statement)
 
-    def connect_buckets(self):
-        logger.info('Connecting all buckets')
-        statement = "CONNECT link Local"
-        self.rest.exec_analytics_statement(self.analytics_nodes[0],
+    def connect_link(self):
+        logger.info('Connecting Link {}'.format(self.analytics_link))
+        statement = "CONNECT link {}".format(self.analytics_link)
+        self.rest.exec_analytics_statement(self.analytics_node,
                                            statement)
 
     def disconnect_link(self):
-        logger.info('DISCONNECT LINK Local')
-        statement = "DISCONNECT LINK Local"
-        self.rest.exec_analytics_statement(self.analytics_nodes[0],
+        logger.info('DISCONNECT LINK {}'.format(self.analytics_link))
+        statement = "DISCONNECT LINK {}".format(self.analytics_link)
+        self.rest.exec_analytics_statement(self.analytics_node,
                                            statement)
 
     def disconnect(self):
         for target in self.target_iterator:
             self.disconnect_bucket(target.bucket)
 
-    def sync(self, collection: bool = False):
-        for target in self.target_iterator:
-            if collection:
-                self.create_datasets_collections(target.bucket)
+    def sync(self):
+        for bucket in self.test_config.buckets:
+            if self.config_file:
+                self.create_datasets_collections(bucket)
+                self.create_index_collections()
             else:
-                self.create_datasets(target.bucket)
-            self.create_index()
-        self.connect_buckets()
-        for target in self.target_iterator:
-            self.num_items += self.monitor.monitor_data_synced(target.node,
-                                                               target.bucket)
+                self.create_datasets(bucket)
+                self.create_index()
+        self.connect_link()
+        for bucket in self.test_config.buckets:
+            self.num_items += self.monitor.monitor_data_synced(self.data_node,
+                                                               bucket,
+                                                               self.analytics_node)
 
     def re_sync(self):
-        for target in self.target_iterator:
-            self.connect_bucket(target.bucket)
-            self.monitor.monitor_data_synced(target.node, target.bucket)
+        self.connect_link()
+        for bucket in self.test_config.buckets:
+            self.monitor.monitor_data_synced(self.data_node, bucket, self.analytics_node)
 
     def set_analytics_logging_level(self):
         log_level = self.test_config.analytics_settings.log_level
-        self.rest.set_analytics_logging_level(self.analytics_nodes[0], log_level)
-        self.rest.restart_analytics_cluster(self.analytics_nodes[0])
-        if not self.rest.validate_analytics_logging_level(self.analytics_nodes[0], log_level):
+        self.rest.set_analytics_logging_level(self.analytics_node, log_level)
+        self.rest.restart_analytics_cluster(self.analytics_node)
+        if not self.rest.validate_analytics_logging_level(self.analytics_node, log_level):
             logger.error('Failed to set logging level {}'.format(log_level))
 
     def set_buffer_cache_page_size(self):
         page_size = self.test_config.analytics_settings.storage_buffer_cache_pagesize
-        self.rest.set_analytics_page_size(self.analytics_nodes[0], page_size)
-        self.rest.restart_analytics_cluster(self.analytics_nodes[0])
+        self.rest.set_analytics_page_size(self.analytics_node, page_size)
+        self.rest.restart_analytics_cluster(self.analytics_node)
 
     def set_storage_compression_block(self):
         storage_compression_block = self.test_config.analytics_settings.storage_compression_block
-        self.rest.set_analytics_storage_compression_block(self.analytics_nodes[0],
+        self.rest.set_analytics_storage_compression_block(self.analytics_node,
                                                           storage_compression_block)
-        self.rest.restart_analytics_cluster(self.analytics_nodes[0])
-        self.rest.validate_analytics_setting(self.analytics_nodes[0], 'storageCompressionBlock',
+        self.rest.restart_analytics_cluster(self.analytics_node)
+        self.rest.validate_analytics_setting(self.analytics_node, 'storageCompressionBlock',
                                              storage_compression_block)
+
+    def get_dataset_items(self, dataset: str):
+        logger.info('Get number of items in dataset {}'.format(dataset))
+        statement = "SELECT COUNT(*) from `{}`;".format(dataset)
+        result = self.rest.exec_analytics_query(self.analytics_node, statement)
+        logger.info("Number of items in dataset {}: {}".
+                    format(dataset, result['results'][0]['$1']))
+        return result['results'][0]['$1']
 
     def run(self):
         self.restore_local()
@@ -128,17 +167,46 @@ class BigFunSyncTest(BigFunTest):
     @with_stats
     @timeit
     def sync(self):
-        if self.test_config.collection.collection_map:
-            super().sync(collection=True)
-        else:
-            super().sync()
+        super().sync()
 
     def run(self):
         super().run()
 
+        if self.analytics_link != "Local":
+            local.create_remote_link(self.analytics_link, self.data_node, self.analytics_node)
+
         sync_time = self.sync()
 
         self.report_kpi(sync_time)
+
+
+class BigFunDropDatasetTest(BigFunTest):
+
+    def _report_kpi(self, num_items, time_elapsed):
+        self.reporter.post(
+            *self.metrics.avg_drop_rate(num_items, time_elapsed)
+        )
+
+    @with_stats
+    @timeit
+    def drop_dataset(self, drop_dataset: str):
+        for target in self.target_iterator:
+            self.rest.delete_collection(host=target.node,
+                                        bucket=target.bucket,
+                                        scope="scope-1",
+                                        collection=drop_dataset)
+        self.monitor.monitor_dataset_drop(self.analytics_node, drop_dataset)
+
+    def run(self):
+        super().run()
+        super().sync()
+
+        drop_dataset = self.test_config.analytics_settings.drop_dataset
+        num_items = self.get_dataset_items(drop_dataset)
+
+        drop_time = self.drop_dataset(drop_dataset)
+
+        self.report_kpi(num_items, drop_time)
 
 
 class BigFunSyncWithCompressionTest(BigFunSyncTest):
@@ -151,6 +219,9 @@ class BigFunSyncWithCompressionTest(BigFunSyncTest):
 class BigFunSyncNoIndexTest(BigFunSyncTest):
 
     def create_index(self):
+        pass
+
+    def create_index_collections(self):
         pass
 
 
@@ -171,7 +242,7 @@ class BigFunIncrSyncTest(BigFunTest):
 
         self.sync()
 
-        self.disconnect()
+        self.disconnect_link()
 
         super().run()
 
@@ -182,7 +253,9 @@ class BigFunIncrSyncTest(BigFunTest):
 
 class BigFunQueryTest(BigFunTest):
 
-    QUERIES = 'perfrunner/workloads/bigfun/queries_with_index.json'
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.QUERIES = self.test_config.analytics_settings.queries
 
     def warmup(self) -> List[Tuple[Query, int]]:
         results = bigfun(self.rest,
@@ -209,12 +282,10 @@ class BigFunQueryTest(BigFunTest):
             )
 
     def run(self):
+        random.seed(8095)
         super().run()
 
-        if self.test_config.collection.collection_map:
-            self.sync(collection=True)
-        else:
-            self.sync()
+        self.sync()
 
         logger.info('Running warmup phase')
         self.warmup()
@@ -234,23 +305,20 @@ class BigFunQueryWithCompressionTest(BigFunQueryTest):
 
 class BigFunQueryNoIndexTest(BigFunQueryTest):
 
-    QUERIES = 'perfrunner/workloads/bigfun/queries_without_index.json'
-
     def create_index(self):
+        pass
+
+    def create_index_collections(self):
         pass
 
 
 class BigFunQueryNoIndexWithCompressionTest(BigFunQueryWithCompressionTest):
 
-    QUERIES = 'perfrunner/workloads/bigfun/queries_without_index.json'
-
     def create_index(self):
         pass
 
-
-class BigFunQueryNoIndexWindowFunctionsTest(BigFunQueryNoIndexTest):
-
-    QUERIES = 'perfrunner/workloads/bigfun/queries_without_index_window_functions.json'
+    def create_index_collections(self):
+        pass
 
 
 class BigFunRebalanceTest(BigFunTest, RebalanceTest):
@@ -268,15 +336,58 @@ class BigFunRebalanceTest(BigFunTest, RebalanceTest):
     def run(self):
         super().run()
 
-        if self.test_config.collection.collection_map:
-            self.sync(collection=True)
-        else:
-            self.sync()
+        self.sync()
 
         self.rebalance_cbas()
 
         if self.is_balanced():
             self.report_kpi()
+
+
+class BigFunConnectTest(BigFunTest):
+
+    def _report_kpi(self, avg_connect_time: int, avg_disconnect_time: int):
+        self.reporter.post(
+            *self.metrics.analytics_avg_connect_time(avg_connect_time)
+        )
+
+        self.reporter.post(
+            *self.metrics.analytics_avg_disconnect_time(avg_disconnect_time)
+        )
+
+    @timeit
+    def connect_analytics_link(self):
+        super().connect_link()
+
+    @timeit
+    def disconnect_analytics_link(self):
+        super().disconnect_link()
+
+    @with_stats
+    def connect_cycle(self, ops: int):
+        total_connect_time = 0
+        total_disconnect_time = 0
+        for op in range(ops):
+            disconnect_time = self.disconnect_analytics_link()
+            logger.info("disconnect time: {}".format(disconnect_time))
+            connect_time = self.connect_analytics_link()
+            logger.info("connect time: {}".format(connect_time))
+            total_connect_time += connect_time
+            total_disconnect_time += disconnect_time
+        return total_connect_time/ops, total_disconnect_time/ops
+
+    def run(self):
+        super().run()
+
+        if self.analytics_link != "Local":
+            local.create_remote_link(self.analytics_link, self.data_node, self.analytics_node)
+
+        self.sync()
+
+        avg_connect_time, avg_disconnect_time = \
+            self.connect_cycle(int(self.test_config.access_settings.ops))
+
+        self.report_kpi(avg_connect_time, avg_disconnect_time)
 
 
 class TPCDSTest(PerfTest):
@@ -345,6 +456,12 @@ class TPCDSTest(PerfTest):
         super().__init__(*args, **kwargs)
 
         self.num_items = 0
+        self.analytics_link = self.test_config.analytics_settings.analytics_link
+        if self.analytics_link == "Local":
+            self.data_node = self.master_node
+            self.analytics_node = self.analytics_nodes[0]
+        else:
+            self.data_node, self.analytics_node = self.cluster_spec.masters
 
     def download_tpcds_couchbase_loader(self):
         if self.worker_manager.is_remote:
@@ -358,9 +475,9 @@ class TPCDSTest(PerfTest):
                 branch=self.test_config.tpcds_loader_settings.branch)
 
     def set_max_active_writable_datasets(self):
-        self.rest.set_analytics_max_active_writable_datasets(self.analytics_nodes[0], 24)
-        self.rest.restart_analytics_cluster(self.analytics_nodes[0])
-        self.rest.validate_analytics_setting(self.analytics_nodes[0],
+        self.rest.set_analytics_max_active_writable_datasets(self.analytics_node, 24)
+        self.rest.restart_analytics_cluster(self.analytics_node)
+        self.rest.validate_analytics_setting(self.analytics_node,
                                              'storageMaxActiveWritableDatasets', 24)
         time.sleep(5)
 
@@ -373,8 +490,7 @@ class TPCDSTest(PerfTest):
             statement = "CREATE DATASET `{}` ON `{}` WHERE table_name = '{}';" \
                 .format(dataset, bucket, dataset)
             logger.info('Running: {}'.format(statement))
-            res = self.rest.exec_analytics_statement(
-                self.analytics_nodes[0], statement)
+            res = self.rest.exec_analytics_statement(self.analytics_node, statement)
             logger.info("Result: {}".format(str(res)))
             time.sleep(5)
 
@@ -383,8 +499,7 @@ class TPCDSTest(PerfTest):
         for index in self.TPCDS_INDEXES:
             statement = "CREATE INDEX {} ON {};".format(index[0], index[1])
             logger.info('Running: {}'.format(statement))
-            res = self.rest.exec_analytics_statement(
-                self.analytics_nodes[0], statement)
+            res = self.rest.exec_analytics_statement(self.analytics_node, statement)
             logger.info("Result: {}".format(str(res)))
             time.sleep(5)
 
@@ -393,17 +508,20 @@ class TPCDSTest(PerfTest):
         for index in self.TPCDS_INDEXES:
             statement = "DROP INDEX {}.{};".format(index[2], index[0])
             logger.info('Running: {}'.format(statement))
-            res = self.rest.exec_analytics_statement(
-                self.analytics_nodes[0], statement)
+            res = self.rest.exec_analytics_statement(self.analytics_node, statement)
             logger.info("Result: {}".format(str(res)))
             time.sleep(5)
 
+    def disconnect_link(self):
+        logger.info('DISCONNECT LINK {}'.format(self.analytics_link))
+        statement = "DISCONNECT LINK {}".format(self.analytics_link)
+        self.rest.exec_analytics_statement(self.analytics_node,
+                                           statement)
+
     def connect_buckets(self):
-        logger.info('Connecting all buckets')
-        statement = "CONNECT link Local"
-        logger.info('Running: {}'.format(statement))
-        res = self.rest.exec_analytics_statement(
-            self.analytics_nodes[0], statement)
+        logger.info('Connecting Link {}'.format(self.analytics_link))
+        statement = "CONNECT link {}".format(self.analytics_link)
+        res = self.rest.exec_analytics_statement(self.analytics_node, statement)
         logger.info("Result: {}".format(str(res)))
         time.sleep(5)
 
@@ -412,8 +530,7 @@ class TPCDSTest(PerfTest):
         for dataset in self.TPCDS_DATASETS:
             statement = "CREATE PRIMARY INDEX ON {};".format(dataset)
             logger.info('Running: {}'.format(statement))
-            res = self.rest.exec_analytics_statement(
-                self.analytics_nodes[0], statement)
+            res = self.rest.exec_analytics_statement(self.analytics_node, statement)
             logger.info("Result: {}".format(str(res)))
             time.sleep(5)
 
@@ -422,22 +539,22 @@ class TPCDSTest(PerfTest):
         for dataset in self.TPCDS_DATASETS:
             statement = "DROP INDEX {}.primary_idx_{};".format(dataset, dataset)
             logger.info('Running: {}'.format(statement))
-            res = self.rest.exec_analytics_statement(
-                self.analytics_nodes[0], statement)
+            res = self.rest.exec_analytics_statement(self.analytics_node, statement)
             logger.info("Result: {}".format(str(res)))
             time.sleep(5)
 
     def sync(self):
-        for target in self.target_iterator:
-            self.create_datasets(target.bucket)
+        self.disconnect_link()
+        for bucket in self.test_config.buckets:
+            self.create_datasets(bucket)
         self.connect_buckets()
-        for target in self.target_iterator:
-            self.num_items += self.monitor.monitor_data_synced(target.node,
-                                                               target.bucket)
+        for bucket in self.test_config.buckets:
+            self.num_items += self.monitor.monitor_data_synced(self.data_node,
+                                                               bucket,
+                                                               self.analytics_node)
 
     def run(self):
         self.download_tpcds_couchbase_loader()
-        self.set_max_active_writable_datasets()
         self.load()
         self.wait_for_persistence()
         self.compact_bucket()

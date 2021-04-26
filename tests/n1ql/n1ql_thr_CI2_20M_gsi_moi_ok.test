@@ -37,14 +37,19 @@ creates = 0
 reads = 0
 updates = 100
 deletes = 0
-throughput = 30000
+throughput = 1500
 items = 20000000
 workers = 20
 time = 1200
 n1ql_queries = singleton-unique-lookup
-n1ql_workers = 240
+n1ql_workers = 120
+workload_instances = 2
 
 [n1ql-singleton-unique-lookup]
 statement = SELECT email FROM `bucket-1` WHERE email = $1;
 scan_consistency = not_bounded
 args = ["{email}"]
+
+[clients]
+libcouchbase = 2.9.3
+python_client = 2.5.0

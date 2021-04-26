@@ -41,8 +41,10 @@ class MetricHelper:
         self.test = test
         self.test_config = test.test_config
         self.cluster_spec = test.cluster_spec
-
-        self.store = PerfStore(CBMONITOR_HOST)
+        if self.test.dynamic_infra:
+            self.store = None
+        else:
+            self.store = PerfStore(CBMONITOR_HOST)
 
     @property
     def _title(self) -> str:
@@ -383,6 +385,19 @@ class MetricHelper:
 
         return scan_latency, self._snapshots, metric_info
 
+    def secondary_scan_latency_value(self, scan_latency,
+                                     percentile: Number, title: str = None) -> Metric:
+        metric_id = "{}_{}th".format(self.test_config.name, percentile)
+        title = '{}th percentile secondary scan latency (ms), {}'.format(percentile,
+                                                                         title)
+        metric_info = self._metric_info(metric_id, title, chirality=-1)
+        metric_info['category'] = "lat"
+
+        scan_latency = scan_latency / 1e6
+        scan_latency = round(scan_latency, 2)
+
+        return scan_latency, self._snapshots, metric_info
+
     def kv_latency(self,
                    operation: str,
                    percentile: Number = 99.9,
@@ -687,6 +702,20 @@ class MetricHelper:
                         break
         return throughput
 
+    def _parse_pytpcc_throughput(self) -> int:
+        executed = 0
+
+        pytpcc_log_file = [filename for filename
+                           in glob.glob("py-tpcc/pytpcc/pytpcc_run_result.log")]
+
+        for filename in pytpcc_log_file:
+            with open(filename) as fh:
+                for line in fh.readlines():
+                    if 'NEW_ORDER' in line:
+                        if line.split()[4] == 'txn/s':
+                            executed = line.split()[1]
+        return int(executed)
+
     def _ycsb_perc_calc(self, _temp: [], io_type: str, percentile: str, lat_dic: {}, _fc: int):
         pio_type = '{}th Percentile {}'.format(percentile, io_type)
         p_lat = round(np.percentile(_temp, percentile) / 1000, 3)
@@ -928,6 +957,16 @@ class MetricHelper:
 
         return throughput, self._snapshots, metric_info
 
+    def pytpcc_tpmc_throughput(self, duration: int) -> Metric:
+
+        metric_info = self._metric_info(chirality=1)
+
+        executed = self._parse_pytpcc_throughput()
+
+        tpmc = round(executed / duration) * 60
+
+        return tpmc, self._snapshots, metric_info
+
     def ycsb_throughput_phase(self,
                               phase: int,
                               workload: str,
@@ -936,7 +975,9 @@ class MetricHelper:
 
         title = '{}, {}, Phase {}, {}'.format(
             "Avg Throughput (ops/sec)", self._title, phase, workload)
-        metric_info = self._metric_info(title=title, chirality=1)
+        metric_id = '{}_{}_{}'.format(self.test_config.name, workload.replace(' ', '_').casefold(),
+                                      phase)
+        metric_info = self._metric_info(title=title, metric_id=metric_id, chirality=1)
 
         throughput = self._parse_ycsb_throughput(operation)
 
@@ -968,7 +1009,9 @@ class MetricHelper:
                            workload: str
                            ) -> Metric:
         title = '{} Latency(ms), {}, Phase {}, {}'.format(io_type, self._title, phase, workload)
-        metric_id = '{}_{}'.format(self.test_config.name, io_type.replace(' ', '_').casefold())
+        metric_id = '{}_{}_{}_{}'.\
+            format(self.test_config.name, workload.replace(' ', '_').casefold(),
+                   phase, io_type.replace(' ', '_').casefold())
         metric_info = self._metric_info(title=title, metric_id=metric_id, chirality=-1)
         return latency, self._snapshots, metric_info
 
@@ -1005,7 +1048,7 @@ class MetricHelper:
 
     def rebalance_time(self, rebalance_time: float) -> Metric:
         metric = self.elapsed_time(rebalance_time)
-        metric[-1]['orderBy'] = self.rebalance_order_by
+        metric[-1]['orderBy'] = self.rebalance_order_by + self._order_by
         return metric
 
     def failover_time(self, delta: float) -> Metric:
@@ -1013,11 +1056,12 @@ class MetricHelper:
 
         return delta, self._snapshots, metric_info
 
-    def scan_throughput(self, throughput: float, metric_id_append_str: str = None) -> Metric:
+    def scan_throughput(self, throughput: float, metric_id_append_str: str = None,
+                        title: str = None) -> Metric:
         metric_info = self._metric_info()
         if metric_id_append_str is not None:
             metric_id = '{}_{}'.format(self.test_config.name, metric_id_append_str)
-            metric_info = self._metric_info(metric_id=metric_id, chirality=1)
+            metric_info = self._metric_info(metric_id=metric_id, title=title, chirality=1)
         metric_info['category'] = "thr"
 
         throughput = round(throughput, 1)
@@ -1130,6 +1174,28 @@ class MetricHelper:
 
         return latency, self._snapshots, metric_info
 
+    def analytics_avg_connect_time(self, avg_connect_time: int) -> Metric:
+        metric_id = '{}_{}'.format(self.test_config.name, "connect")
+
+        title = 'Avg. connect time (sec), {}'.format(self._title)
+
+        metric_info = self._metric_info(metric_id,
+                                        title,
+                                        chirality=-1)
+
+        return round(avg_connect_time, 1), self._snapshots, metric_info
+
+    def analytics_avg_disconnect_time(self, avg_disconnect_time: int) -> Metric:
+        metric_id = '{}_{}'.format(self.test_config.name, "disconnect")
+
+        title = 'Avg. disconnect time (sec), {}'.format(self._title)
+
+        metric_info = self._metric_info(metric_id,
+                                        title,
+                                        chirality=-1)
+
+        return round(avg_disconnect_time, 1), self._snapshots, metric_info
+
     def analytics_volume_latency(self,
                                  query: Query,
                                  latency: int,
@@ -1167,6 +1233,13 @@ class MetricHelper:
         return max_consumer_rss, max_producer_rss
 
     def avg_ingestion_rate(self, num_items: int, time_elapsed: float) -> Metric:
+        metric_info = self._metric_info(chirality=1)
+
+        rate = round(num_items / time_elapsed)
+
+        return rate, self._snapshots, metric_info
+
+    def avg_drop_rate(self, num_items: int, time_elapsed: float) -> Metric:
         metric_info = self._metric_info(chirality=1)
 
         rate = round(num_items / time_elapsed)

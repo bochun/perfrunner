@@ -12,7 +12,8 @@ from logger import logger
 class CloudRunner:
 
     AMI = {
-        'clients': 'ami-dbf9baa3',
+        #  perf-client-2021-03, pyenv python 3.6.12
+        'clients': 'ami-04f9b8bb1ea4c3ef6',
         'servers': 'ami-83b400fb',
     }
 
@@ -29,7 +30,7 @@ class CloudRunner:
         'SubnetId': 'subnet-40406509',  # PerfVPC
     }
 
-    DEVICE_SETTINGS = {
+    DEVICE_SETTINGS_IO = {
         'BlockDeviceMappings': [
             {
                 'DeviceName': '/dev/sdb',
@@ -44,16 +45,35 @@ class CloudRunner:
         ],
     }
 
+    DEVICE_SETTINGS_GP = {
+        'BlockDeviceMappings': [
+            {
+                'DeviceName': '/dev/sdb',
+                'Ebs': {
+                    'Encrypted': False,
+                    'DeleteOnTermination': True,
+                    'VolumeSize': 1000,
+                    'VolumeType': 'gp2',
+                }
+            },
+        ],
+    }
+
     MONITORING_INTERVAL = 2  # seconds
 
     def __init__(self):
         self.ec2 = boto3.resource('ec2', region_name=self.AWS_REGION)
         self.s3 = boto3.resource('s3', region_name=self.AWS_REGION)
 
-    def launch(self, count: int, group: str, instance_type: str) -> List[str]:
+    def launch(self, count: int, group: str, instance_type: str, ebs_type: str) -> List[str]:
         instance_settings = copy.deepcopy(self.EC2_SETTINGS)
         if group == 'servers':
-            instance_settings.update(**self.DEVICE_SETTINGS)
+            if ebs_type == "io":
+                instance_settings.update(**self.DEVICE_SETTINGS_IO)
+            elif ebs_type == "gp":
+                instance_settings.update(**self.DEVICE_SETTINGS_GP)
+            else:
+                raise Exception("ebs_type {} not supported".format(ebs_type))
 
         instances = self.ec2.create_instances(
             ImageId=self.AMI[group],
@@ -100,7 +120,7 @@ class CloudRunner:
         logger.info('Reading information from {}'.format(self.EC2_META))
         ids = []
         with open(self.EC2_META) as fp:
-            meta = yaml.load(fp)
+            meta = yaml.load(fp, Loader=yaml.FullLoader)
             for instances in meta.values():
                 ids += list(instances)
         return ids
@@ -155,6 +175,9 @@ def get_args():
                                  'r5.4xlarge',
                                  'm5ad.4xlarge',
                                  'c5.24xlarge'])
+    parser.add_argument('--ebs-type',
+                        choices=['io', 'gp'],
+                        default='io')
     parser.add_argument('action',
                         choices=['launch', 'terminate'])
     parser.add_argument('--enable-s3',
@@ -173,14 +196,16 @@ def main():
         if args.num_servers:
             instance_ids = cr.launch(count=args.num_servers,
                                      group='servers',
-                                     instance_type=args.server_type)
+                                     instance_type=args.server_type,
+                                     ebs_type=args.ebs_type)
             cr.monitor_instances(instance_ids)
             ips = cr.get_ips(instance_ids)
             cr.store_ips(ips, group='servers')
         if args.num_clients:
             instance_ids = cr.launch(count=args.num_clients,
                                      group='clients',
-                                     instance_type=args.client_type,)
+                                     instance_type=args.client_type,
+                                     ebs_type=args.ebs_type)
             cr.monitor_instances(instance_ids)
             ips = cr.get_ips(instance_ids)
             cr.store_ips(ips, group='clients')

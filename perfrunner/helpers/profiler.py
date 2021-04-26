@@ -1,6 +1,7 @@
 import threading
 from typing import Callable
 
+import paramiko
 import requests
 from decorator import decorator
 from sshtunnel import SSHTunnelForwarder
@@ -41,8 +42,11 @@ class Profiler:
     DEBUG_PORTS = {
         'fts':   8094,
         'index': 9102,
-        'kv':    9998,  # goxdcr
+        'goxdcr': 9998,
+        'kv': 9998,           # will be deprecated in future
         'n1ql':  8093,
+        'eventing': 8096,
+        'projector': 9999
     }
 
     ENDPOINTS = {
@@ -60,6 +64,12 @@ class Profiler:
 
         self.ssh_username, self.ssh_password = cluster_spec.ssh_credentials
 
+        self.cluster_spec = cluster_spec
+
+        self.profiling_settings = test_config.profiling_settings
+
+        self.linux_perf_path = '/opt/couchbase/var/lib/couchbase/logs/'
+
     def new_tunnel(self, host: str, port: int) -> SSHTunnelForwarder:
         return SSHTunnelForwarder(
             ssh_address_or_host=host,
@@ -70,8 +80,41 @@ class Profiler:
 
     def save(self, host: str, service: str, profile: str, content: bytes):
         fname = '{}_{}_{}_{}.pprof'.format(host, service, profile, uhex()[:6])
+        logger.info('Collected {} '.format(fname))
         with open(fname, 'wb') as fh:
             fh.write(content)
+
+    def linux_perf_profile(self, host: str, fname: str, path: str):
+
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        try:
+            client.connect(hostname=host, username=self.ssh_username,
+                           password=self.ssh_password)
+
+        except Exception:
+            logger.info('Cannot connect to the "{}" via SSH Server'.format(host))
+            exit()
+
+        logger.info('Capturing linux profile using linux perf record ')
+
+        cmd = 'perf record -a -F {} -g --call-graph {} ' \
+              '-p $(pgrep memcached) -o {}{} ' \
+              '-- sleep {}'.format(self.profiling_settings.linux_perf_frequency,
+                                   self.profiling_settings.linux_perf_callgraph,
+                                   path,
+                                   fname,
+                                   self.profiling_settings.linux_perf_profile_duration)
+        stdin, stdout, stderr = client.exec_command(cmd)
+        exit_status = stdout.channel.recv_exit_status()
+
+        if exit_status == 0:
+            logger.info("linux perf record: linux perf profile capture completed")
+        else:
+            logger.info("perf record failed , exit_status :  ", exit_status)
+
+        client.close()
 
     def profile(self, host: str, service: str, profile: str):
         logger.info('Collecting {} profile on {}'.format(profile, host))
@@ -79,10 +122,20 @@ class Profiler:
         endpoint = self.ENDPOINTS[profile]
         port = self.DEBUG_PORTS[service]
 
-        with self.new_tunnel(host, port) as tunnel:
-            url = endpoint.format(tunnel.local_bind_port)
-            response = requests.get(url=url, auth=self.rest.auth)
-            self.save(host, service, profile, response.content)
+        if self.profiling_settings.linux_perf_profile_flag:
+            logger.info('Collecting {} profile on {} using linux perf '
+                        'reccord'.format(profile, host))
+
+            fname = 'linux_{}_{}_{}_perf.data'.format(host, profile, uhex()[:4])
+            self.linux_perf_profile(host=host, fname=fname, path=self.linux_perf_path)
+
+        else:
+            logger.info('Collecting {} profile on {}'.format(profile, host))
+
+            with self.new_tunnel(host, port) as tunnel:
+                url = endpoint.format(tunnel.local_bind_port)
+                response = requests.get(url=url, auth=self.rest.auth)
+                self.save(host, service, profile, response.content)
 
     def timer(self, **kwargs):
         timer = Timer(
@@ -96,7 +149,12 @@ class Profiler:
     def schedule(self):
         for service in self.test_config.profiling_settings.services:
             logger.info('Scheduling profiling of "{}" services'.format(service))
-            for server in self.rest.get_active_nodes_by_role(self.master_node,
-                                                             role=service):
+            if service == 'projector':
+                active_nodes_by_role = self.rest.get_active_nodes_by_role(
+                                                self.master_node, role='kv')
+            else:
+                active_nodes_by_role = self.rest.get_active_nodes_by_role(
+                                            self.master_node, role=service)
+            for server in active_nodes_by_role:
                 for profile in self.test_config.profiling_settings.profiles:
                     self.timer(host=server, service=service, profile=profile)

@@ -2,7 +2,7 @@
 test = perfrunner.tests.secondary.InitialandIncrementalSecondaryIndexTest
 
 [showfast]
-title = 1 bucket x 100M x 2KB, 10k indexes, large key 1024 char, initial build only, MOI, s=1 c=1000
+title = 1 bucket x 100M x 2KB, 10000 Indexes, large key 1024 char, initial build only, MOI, s=1 c=1000
 component = secondary
 sub_category = MOI
 
@@ -43,7 +43,5 @@ indexer.settings.max_cpu_percent = 4800
 queryport.client.usePlanner = false
 queryport.client.log_level = Warn
 projector.backChanSize = 500000
-
-[clients]
-libcouchbase = 3.0.2
-python_client = 3.0.4
+disable_perindex_stats = True
+indexer.settings.build.batch_size = 100

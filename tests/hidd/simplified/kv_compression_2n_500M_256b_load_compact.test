@@ -10,6 +10,8 @@ category = compress
 mem_quota = 51200
 initial_nodes = 2
 num_buckets = 1
+kernel_mem_limit = 60G
+kernel_mem_limit_services = kv
 enable_cpu_cores = false
 
 [bucket]
@@ -24,3 +26,7 @@ num_writer_threads = 64
 items = 500000000
 size = 256
 workers = 100
+
+[clients]
+libcouchbase = 2.9.3
+python_client = 2.5.0

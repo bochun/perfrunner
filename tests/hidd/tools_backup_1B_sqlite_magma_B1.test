@@ -2,7 +2,7 @@
 test = perfrunner.tests.magma.BackupTestDGM
 
 [showfast]
-title = 4 nodes, 1 bucket x 1B x 1KB, Idle, SQLite, Magma
+title = 4 nodes, 1 bucket x 1B x 1KB, Idle, SQLite, 2%% Resident Ratio, Magma
 component = hidd
 category = tools
 sub_category = Backup
@@ -56,3 +56,7 @@ items = 1000000000
 [backup]
 threads = 16
 storage_type = sqlite
+
+[clients]
+libcouchbase = 2.9.3
+python_client = 2.5.0

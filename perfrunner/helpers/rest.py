@@ -9,6 +9,7 @@ from requests.exceptions import ConnectionError
 
 from logger import logger
 from perfrunner.helpers.misc import pretty_dict
+from perfrunner.helpers.remote import RemoteHelper
 from perfrunner.settings import BucketSettings, ClusterSpec
 
 MAX_RETRY = 20
@@ -39,6 +40,16 @@ def retry(method: Callable, *args, **kwargs):
 
 
 class RestHelper:
+    def __new__(cls,
+                cluster_spec: ClusterSpec,
+                verbose: bool = False):
+        if cluster_spec.dynamic_infrastructure:
+            return KubernetesRestHelper(cluster_spec)
+        else:
+            return DefaultRestHelper(cluster_spec)
+
+
+class RestBase:
 
     def __init__(self, cluster_spec: ClusterSpec):
         self.rest_username, self.rest_password = cluster_spec.rest_credentials
@@ -68,6 +79,12 @@ class RestHelper:
 
     def delete(self, **kwargs) -> requests.Response:
         return self._delete(**kwargs)
+
+
+class DefaultRestHelper(RestBase):
+
+    def __init__(self, cluster_spec):
+        super().__init__(cluster_spec=cluster_spec)
 
     def set_data_path(self, host: str, path: str):
         logger.info('Configuring data path on {}'.format(host))
@@ -189,11 +206,14 @@ class RestHelper:
         return self.get(url=api).json()
 
     def create_index(self, host: str, bucket: str, name: str, field: str,
-                     storage: str = 'memdb'):
+                     storage: str = 'memdb', scope: str = '_default',
+                     collection: str = '_default'):
         api = 'http://{}:9102/createIndex'.format(host)
         data = {
             'index': {
                 'bucket': bucket,
+                'scope': scope,
+                'collection': collection,
                 'using': storage,
                 'name': name,
                 'secExprs': ['`{}`'.format(field)],
@@ -318,8 +338,6 @@ class RestHelper:
             'evictionPolicy': eviction_policy,
             'flushEnabled': 1,
             'replicaNumber': replica_number,
-            'authType': 'sasl',
-            'saslPassword': password,
         }
 
         if bucket_type == BucketSettings.BUCKET_TYPE:
@@ -362,6 +380,16 @@ class RestHelper:
     def get_bucket_stats(self, host: str, bucket: str) -> dict:
         api = 'http://{}:8091/pools/default/buckets/{}/stats'.format(host,
                                                                      bucket)
+        return self.get(url=api).json()
+
+    def get_dcp_replication_items(self, host: str, bucket: str) -> dict:
+        api = 'http://{}:8091/pools/default/stats/range/kv_dcp_items_remaining?bucket={}&' \
+              'connection_type=replication&aggregationFunction=sum'.format(host, bucket)
+        return self.get(url=api).json()
+
+    def get_dcp_replication_items_v2(self, host: str, bucket: str) -> dict:
+        api = 'http://{}:8091/pools/default/stats/range/kv_dcp_items_remaining?bucket={}&' \
+              'connection_type=replication&nodesAggregation=sum'.format(host, bucket)
         return self.get(url=api).json()
 
     def get_xdcr_stats(self, host: str, bucket: str) -> dict:
@@ -502,7 +530,7 @@ class RestHelper:
 
     def set_auto_failover(self, host: str, enabled: str,
                           failover_min: int, failover_max: int):
-        logger.info('Enabling auto-failover with the minimum timeout')
+        logger.info('Setting auto-failover to: {}'.format(enabled))
 
         api = 'http://{}:8091/settings/autoFailover'.format(host)
 
@@ -684,7 +712,7 @@ class RestHelper:
 
     def get_index_storage_stats(self, host: str) -> str:
         api = 'http://{}:9102/stats/storage'.format(host)
-        return self.get(url=api).text
+        return self.get(url=api)
 
     def get_index_storage_stats_mm(self, host: str) -> str:
         api = 'http://{}:9102/stats/storage/mm'.format(host)
@@ -758,8 +786,29 @@ class RestHelper:
         }
         return self.post(url=api, data=data)
 
+    def exec_analytics_query(self, analytics_node: str,
+                             statement: str) -> requests.Response:
+        api = 'http://{}:{}/analytics/service'.format(analytics_node,
+                                                      ANALYTICS_PORT)
+        data = {
+            'statement': statement
+        }
+        return self.post(url=api, data=data).json()
+
     def get_analytics_stats(self, analytics_node: str) -> dict:
         api = 'http://{}:9110/analytics/node/stats'.format(analytics_node)
+        return self.get(url=api).json()
+
+    def get_pending_mutations(self, analytics_node: str) -> dict:
+        api = 'http://{}:8095/analytics/node/agg/stats/remaining'.format(analytics_node)
+        return self.get(url=api).json()
+
+    def get_pending_mutations_v2(self, analytics_node: str) -> dict:
+        api = 'http://{}:8095/analytics/status/ingestion'.format(analytics_node)
+        return self.get(url=api).json()
+
+    def get_ingestion_v2(self, analytics_node: str) -> dict:
+        api = 'http://{}:8095/analytics/status/ingestion/v2'.format(analytics_node)
         return self.get(url=api).json()
 
     def set_analytics_logging_level(self, analytics_node: str, log_level: str):
@@ -840,6 +889,16 @@ class RestHelper:
         response = self.get(url=api).json()
         return response
 
+    def get_cbas_incoming_records_count(self, host: str) -> dict:
+        api = 'http://{}:8091/pools/default/stats/range/cbas_incoming_records_count?' \
+              'aggregationFunction=sum'.format(host)
+        return self.get(url=api).json()
+
+    def get_cbas_incoming_records_count_v2(self, host: str) -> dict:
+        api = 'http://{}:8091/pools/default/stats/range/cbas_incoming_records_count?' \
+              'nodesAggregation=sum'.format(host)
+        return self.get(url=api).json()
+
     def deploy_function(self, node: str, func: dict, name: str):
         logger.info('Deploying function on node {}: {}'.format(node, pretty_dict(func)))
         api = 'http://{}:8096/api/v1/functions/{}'.format(node, name)
@@ -897,6 +956,13 @@ class RestHelper:
                 active_nodes_by_role.append(node)
         return active_nodes_by_role
 
+    def fts_set_node_level_parameters(self, parameter: dict, host: str):
+        logger.info("Adding in the parameter {} ".format(parameter))
+        api = "http://{}:8094/api/managerOptions".format(host)
+        headers = {'Content-Type': 'application/json'}
+        data = json.dumps(parameter, ensure_ascii=False)
+        self.put(url=api, data=data, headers=headers)
+
     def upload_cluster_certificate(self, node: str):
         logger.info("Uploading cluster certificate to {}".format(node))
         api = 'http://{}:8091/controller/uploadClusterCA'.format(node)
@@ -950,7 +1016,8 @@ class RestHelper:
 
     def create_scope(self, host, bucket, scope):
         logger.info("Creating scope {}:{}".format(bucket, scope))
-        api = 'http://{}:8091/pools/default/buckets/{}/collections'.format(host, bucket)
+        api = 'http://{}:8091/pools/default/buckets/{}/scopes'\
+            .format(host, bucket)
         data = {
             'name': scope
         }
@@ -958,7 +1025,8 @@ class RestHelper:
 
     def create_collection(self, host, bucket, scope, collection):
         logger.info("Creating collection {}:{}.{}".format(bucket, scope, collection))
-        api = 'http://{}:8091/pools/default/buckets/{}/collections/{}'.format(host, bucket, scope)
+        api = 'http://{}:8091/pools/default/buckets/{}/scopes/{}/collections'\
+            .format(host, bucket, scope)
         data = {
             'name': collection
         }
@@ -966,6 +1034,79 @@ class RestHelper:
 
     def delete_collection(self, host, bucket, scope, collection):
         logger.info("Dropping collection {}:{}.{}".format(bucket, scope, collection))
-        api = 'http://{}:8091/pools/default/buckets/{}/collections/{}/{}'\
+        api = 'http://{}:8091/pools/default/buckets/{}/scopes/{}/collections/{}'\
             .format(host, bucket, scope, collection)
         self.delete(url=api)
+
+    def set_collection_map(self, host, bucket, collection_map):
+        logger.info("Setting collection map on {} via bulk api".format(bucket))
+        api = 'http://{}:8091/pools/default/buckets/{}/scopes' \
+            .format(host, bucket)
+        self.put(url=api, data=json.dumps(collection_map))
+
+
+class KubernetesRestHelper(RestBase):
+
+    def __init__(self, cluster_spec: ClusterSpec):
+        super().__init__(cluster_spec=cluster_spec)
+        self.remote = RemoteHelper(cluster_spec)
+        self.ip_table, self.port_translation = self.remote.get_ip_port_mapping()
+
+    def translate_host_and_port(self, host, port):
+        trans_host = self.ip_table.get(host)
+        trans_port = self.port_translation.get(trans_host).get(str(port))
+        return trans_host, trans_port
+
+    def exec_n1ql_statement(self, host: str, statement: str) -> dict:
+        host, port = self.translate_host_and_port(host, '8093')
+        api = 'http://{}:{}/query/service'\
+            .format(host, port)
+        data = {
+            'statement': statement,
+        }
+        response = self.post(url=api, data=data)
+        return response.json()
+
+    # indexer endpoints not yet exposed by operator
+    def get_index_status(self, host: str) -> dict:
+        return {'status': [{'status': 'Ready'}]}
+
+    # indexer endpoints not yet exposed by operator
+    def get_gsi_stats(self, host: str) -> dict:
+        return {'num_docs_queued': 0, 'num_docs_pending': 0}
+
+    def get_active_nodes_by_role(self, master_node: str, role: str) -> List[str]:
+        active_nodes_by_role = []
+        for node in self.cluster_spec.servers_by_role(role):
+            active_nodes_by_role.append(node)
+        return active_nodes_by_role
+
+    def node_statuses(self, host: str) -> dict:
+        host, port = self.translate_host_and_port(host, '8091')
+        api = 'http://{}:{}/nodeStatuses'\
+            .format(host, port)
+        data = self.get(url=api).json()
+        return {node: info['status'] for node, info in data.items()}
+
+    def get_version(self, host: str) -> str:
+        logger.info('Getting Couchbase Server version')
+        host, port = self.translate_host_and_port(host, '8091')
+        api = 'http://{}:{}/pools/'\
+            .format(host, port)
+        r = self.get(url=api).json()
+        return r['implementationVersion'] \
+            .replace('-rel-enterprise', '') \
+            .replace('-enterprise', '') \
+            .replace('-community', '')
+
+    def get_bucket_stats(self, host: str, bucket: str) -> dict:
+        host, port = self.translate_host_and_port(host, '8091')
+        api = 'http://{}:{}/pools/default/buckets/{}/stats'\
+            .format(host, port, bucket)
+        return self.get(url=api).json()
+
+    def get_bucket_info(self, host: str, bucket: str) -> List[str]:
+        host, port = self.translate_host_and_port(host, '8091')
+        api = 'http://{}:{}/pools/default/buckets/{}'\
+            .format(host, port, bucket)
+        return self.get(url=api).json()

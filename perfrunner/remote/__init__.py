@@ -2,6 +2,7 @@ import shutil
 from glob import glob
 
 from fabric.api import cd, get, run, settings, shell_env
+
 from logger import logger
 from perfrunner.remote.context import all_clients, master_client
 from perfrunner.settings import REPO
@@ -40,14 +41,14 @@ class Remote:
     @all_clients
     def install_clients(self, perfrunner_home, test_config):
         client_settings = test_config.client_settings.__dict__
-        for client, version in client_settings.items():
-            if client == "python_client":
-                with cd(perfrunner_home):
-                    if 'review.couchbase.org' in version or "github" in version:
-                        run("env/bin/pip install {} --no-cache-dir".format(version), quiet=True)
-                    else:
-                        run("env/bin/pip install couchbase=={} "
-                            "--no-cache-dir".format(version), quiet=True)
+        py_version = client_settings['python_client']
+        if py_version is not None:
+            with cd(perfrunner_home):
+                if 'review.couchbase.org' in py_version or "github" in py_version:
+                    run("env/bin/pip install {} --no-cache-dir".format(py_version), quiet=True)
+                else:
+                    run("env/bin/pip install couchbase=={} "
+                        "--no-cache-dir".format(py_version), quiet=True)
 
     @master_client
     def remote_copy(self, worker_home: str):
@@ -56,15 +57,17 @@ class Remote:
                 logger.info('move couchbase package to perfrunner')
                 run('mv /tmp/couchbase.rpm ./')
 
-    def start_celery_worker(self, worker, worker_home):
+    def start_celery_worker(self, worker, worker_home, broker_url):
         with settings(host_string=worker):
             with cd(worker_home), shell_env(PYTHONOPTIMIZE='1',
                                             PYTHONWARNINGS='ignore',
                                             C_FORCE_ROOT='1'):
                 run('ulimit -n 10240; '
+                    'WORKER_TYPE=remote '
+                    'BROKER_URL={1} '
                     'nohup env/bin/celery worker -A perfrunner.helpers.worker '
                     '-l INFO -Q {0} -n {0} -C --discard '
-                    '&>worker_{0}.log &'.format(worker), pty=False)
+                    '&>worker_{0}.log &'.format(worker, broker_url), pty=False)
 
     def clone_git_repo(self, repo: str, branch: str, worker_home: str, commit: str = None):
         logger.info('Cloning repository: {} branch {}'.format(repo, branch))

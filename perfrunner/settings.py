@@ -62,6 +62,68 @@ class Config:
 class ClusterSpec(Config):
 
     @property
+    def dynamic_infrastructure(self):
+        if 'infrastructure' in self.config.sections():
+            return True
+        else:
+            return False
+
+    @property
+    def generated_cloud_config_path(self):
+        if self.dynamic_infrastructure:
+            return "cloud/infrastructure/generated/infrastructure_config.json"
+        else:
+            return None
+
+    @property
+    def infrastructure_settings(self):
+        return {k: v for k, v in self.config.items('infrastructure')}
+
+    @property
+    def infrastructure_clusters(self):
+        return {k: v for k, v in self.config.items('clusters')}
+
+    @property
+    def infrastructure_clients(self):
+        return {k: v for k, v in self.config.items('clients')}
+
+    @property
+    def infrastructure_utilities(self):
+        return {k: v for k, v in self.config.items('utilities')}
+
+    def kubernetes_version(self, cluster_name):
+        return self.infrastructure_section(cluster_name)\
+            .get('version', '1.17')
+
+    def istio_enabled(self, cluster_name):
+        istio_enabled = self.infrastructure_section(cluster_name).get('istio_enabled', 0)
+        istio_enabled = bool(int(istio_enabled))
+        return istio_enabled
+
+    def kubernetes_storage_class(self, cluster_name):
+        return self.infrastructure_section(cluster_name) \
+            .get('storage_class', 'default')
+
+    def kubernetes_clusters(self):
+        k8s_clusters = []
+        if 'k8s' in self.config.sections():
+            for k, v in self.config.items('k8s'):
+                k8s_clusters += v.split(",")
+        return k8s_clusters
+
+    def infrastructure_section(self, section: str):
+        if section in self.config.sections():
+            return {k: v for k, v in self.config.items(section)}
+        else:
+            return {}
+
+    def infrastructure_config(self):
+        infra_config = {}
+        for section in self.config.sections():
+            infra_config[section] = {p: v for p, v in self.config.items(section)}
+        return infra_config
+
+    @property
     def clusters(self) -> Iterator:
         for cluster_name, servers in self.config.items('clusters'):
             hosts = [s.split(':')[0] for s in servers.split()]
@@ -108,8 +170,25 @@ class ClusterSpec(Config):
         return server_roles
 
     @property
+    def servers_and_roles(self) -> Dict[str, str]:
+        server_and_roles = []
+        for _, servers in self.config.items('clusters'):
+            for server in servers.split():
+                host, roles = server.split(':')
+                server_and_roles.append((host, roles))
+        return server_and_roles
+
+    @property
     def workers(self) -> List[str]:
-        return self.config.get('clients', 'hosts').split()
+        if self.dynamic_infrastructure:
+            client_map = self.infrastructure_clients
+            clients = []
+            for k, v in client_map.items():
+                if "workers" in k:
+                    clients += ["{}.{}".format(k, host) for host in v.split()]
+            return clients
+        else:
+            return self.config.get('clients', 'hosts').split()
 
     @property
     def client_credentials(self) -> List[str]:
@@ -148,6 +227,10 @@ class ClusterSpec(Config):
     @property
     def ssh_credentials(self) -> List[str]:
         return self.config.get('credentials', 'ssh').split(':')
+
+    @property
+    def aws_key_name(self) -> List[str]:
+        return self.config.get('credentials', 'aws_key_name')
 
     @property
     def parameters(self) -> dict:
@@ -200,6 +283,7 @@ class ClusterSettings:
     ONLINE_CORES = 0
     ENABLE_CPU_CORES = 'true'
     ENABLE_N2N_ENCRYPTION = None
+    BUCKET_NAME = 'bucket-1'
 
     IPv6 = 0
 
@@ -242,6 +326,8 @@ class ClusterSettings:
             self.kernel_mem_limit_services = kernel_mem_limit_services.split()
         else:
             self.kernel_mem_limit_services = self.KERNEL_MEM_LIMIT_SERVICES
+
+        self.bucket_name = options.get('bucket_name', self.BUCKET_NAME)
 
 
 class StatsSettings:
@@ -290,6 +376,14 @@ class ProfilingSettings:
 
     SERVICES = ''
 
+    LINUX_PERF_PROFILE_DURATION = 10  # seconds
+
+    LINUX_PERF_FREQUENCY = 99
+
+    LINUX_PERF_CALLGRAPH = 'lbr'     # optional lbr, dwarf
+
+    LINUX_PERF_DELAY_MULTIPLIER = 2
+
     def __init__(self, options: dict):
         self.services = options.get('services',
                                     self.SERVICES).split()
@@ -299,6 +393,19 @@ class ProfilingSettings:
                                             self.NUM_PROFILES))
         self.profiles = options.get('profiles',
                                     self.PROFILES).split(',')
+        self.linux_perf_profile_duration = int(options.get('linux_perf_profile_duration',
+                                                           self.LINUX_PERF_PROFILE_DURATION))
+
+        self.linux_perf_profile_flag = bool(options.get('linux_perf_profile_flag'))
+
+        self.linux_perf_frequency = int(options.get('linux_perf_frequency',
+                                                    self.LINUX_PERF_FREQUENCY))
+
+        self.linux_perf_callgraph = options.get('linux_perf_callgraph',
+                                                self.LINUX_PERF_CALLGRAPH)
+
+        self.linux_perf_delay_multiplier = int(options.get('linux_perf_delay_multiplier',
+                                                           self.LINUX_PERF_DELAY_MULTIPLIER))
 
 
 class BucketSettings:
@@ -346,10 +453,12 @@ class CollectionSettings:
 
     CONFIG = None
     COLLECTION_MAP = None
+    USE_BULK_API = 1
 
     def __init__(self, options: dict):
         self.config = options.get('config', self.CONFIG)
         self.collection_map = self.COLLECTION_MAP
+        self.use_bulk_api = int(options.get('use_bulk_api', self.USE_BULK_API))
         if self.config is not None:
             with open(self.config) as f:
                 self.collection_map = json.load(f)
@@ -391,11 +500,12 @@ class RebalanceSettings:
     DELAY_BEFORE_FAILOVER = 600
     START_AFTER = 1200
     STOP_AFTER = 1200
+    FTS_PARTITIONS = "1"
+    FTS_MAX_DCP_PARTITIONS = "0"
 
     def __init__(self, options: dict):
         nodes_after = options.get('nodes_after', '').split()
         self.nodes_after = [int(num_nodes) for num_nodes in nodes_after]
-
         self.swap = int(options.get('swap', self.SWAP))
 
         self.failed_nodes = int(options.get('failed_nodes', 1))
@@ -407,6 +517,17 @@ class RebalanceSettings:
 
         self.start_after = int(options.get('start_after', self.START_AFTER))
         self.stop_after = int(options.get('stop_after', self.STOP_AFTER))
+
+        # The reblance settings for FTS
+        self.ftspartitions = options.get('ftspartitions', self.FTS_PARTITIONS)
+        self.fts_max_dcp_partitions = options.get('fts_max_dcp_partitions',
+                                                  self.FTS_MAX_DCP_PARTITIONS)
+        self.fts_node_level_parameters = {}
+        if self.ftspartitions != self.FTS_PARTITIONS:
+            self.fts_node_level_parameters["maxConcurrentPartitionMovesPerNode"] = \
+                self.ftspartitions
+        if self.fts_max_dcp_partitions != self.FTS_MAX_DCP_PARTITIONS:
+            self.fts_node_level_parameters["maxFeedsPerDCPAgent"] = self.fts_max_dcp_partitions
 
 
 class PhaseSettings:
@@ -446,6 +567,7 @@ class PhaseSettings:
     SIZE = 2048
 
     PHASE = 0
+    INSERT_TEST_FLAG = 0
 
     MEM_LOW_WAT = 0
     MEM_HIGH_WAT = 0
@@ -464,6 +586,8 @@ class PhaseSettings:
     WORKERS = 0
     QUERY_WORKERS = 0
     N1QL_WORKERS = 0
+    FTS_DATA_SPREAD_WORKERS = None
+    FTS_DATA_SPREAD_WORKER_TYPE = "default"
     WORKLOAD_INSTANCES = 1
 
     N1QL_OP = 'read'
@@ -553,6 +677,9 @@ class PhaseSettings:
     JAVA_DCP_STREAM = 'all'
     JAVA_DCP_CONFIG = None
     JAVA_DCP_CLIENTS = 0
+    SPLIT_WORKLOAD = None
+    SPLIT_WORKLOAD_THROUGHPUT = 0
+    SPLIT_WORKLOAD_WORKERS = 0
 
     DOCUMENT_GROUPS = 1
 
@@ -570,6 +697,7 @@ class PhaseSettings:
         self.items = int(options.get('items', self.ITEMS))
 
         self.phase = int(options.get('phase', self.PHASE))
+        self.insert_test_flag = int(options.get('insert_test_flag', self.INSERT_TEST_FLAG))
 
         self.mem_low_wat = int(options.get('mem_low_wat', self.MEM_LOW_WAT))
         self.mem_high_wat = int(options.get('mem_high_wat', self.MEM_HIGH_WAT))
@@ -710,12 +838,17 @@ class PhaseSettings:
                                            self.MIN_TLS_VERSION)
 
         # Durability settings
-        self.persist_to = int(options.get('persist_to',
-                                          self.PERSIST_TO))
-        self.replicate_to = int(options.get('replicate_to',
-                                            self.REPLICATE_TO))
+
+        self.durability_set = False
+        if options.get('persist_to', None) or \
+                options.get('replicate_to', None) or \
+                options.get('durability', None):
+            self.durability_set = True
+
+        self.replicate_to = int(options.get('replicate_to', self.REPLICATE_TO))
+        self.persist_to = int(options.get('persist_to', self.PERSIST_TO))
         if options.get('durability', self.DURABILITY) is not None:
-            self.durability = int(options.get('durability', self.DURABILITY))
+            self.durability = int(options.get('durability'))
         else:
             self.durability = self.DURABILITY
 
@@ -762,6 +895,20 @@ class PhaseSettings:
 
         self.doc_groups = int(options.get('doc_groups', self.DOCUMENT_GROUPS))
 
+        self.fts_data_spread_workers = options.get(
+            'fts_data_spread_workers',
+            self.FTS_DATA_SPREAD_WORKERS
+        )
+        if self.fts_data_spread_workers is not None:
+            self.fts_data_spread_workers = int(self.fts_data_spread_workers)
+
+        self.fts_data_spread_worker_type = "default"
+        self.split_workload = options.get('split_workload', self.SPLIT_WORKLOAD)
+        self.split_workload_throughput = options.get('split_workload_throughput',
+                                                     self.SPLIT_WORKLOAD_THROUGHPUT)
+        self.split_workload_workers = options.get('split_workload_throughput',
+                                                  self.SPLIT_WORKLOAD_WORKERS)
+
     def __str__(self) -> str:
         return str(self.__dict__)
 
@@ -773,11 +920,14 @@ class LoadSettings(PhaseSettings):
 
 
 class JTSAccessSettings(PhaseSettings):
+
     JTS_REPO = "https://github.com/couchbaselabs/JTS"
     JTS_REPO_BRANCH = "master"
     JTS_HOME_DIR = "JTS"
     JTS_RUN_CMD = "java -jar target/JTS-1.0-jar-with-dependencies.jar"
     JTS_LOGS_DIR = "JTSlogs"
+    FTS_PARTITIONS = "1"
+    FTS_MAX_DCP_PARTITIONS = "0"
 
     def __init__(self, options: dict):
         self.jts_repo = self.JTS_REPO
@@ -814,11 +964,29 @@ class JTSAccessSettings(PhaseSettings):
         self.test_geo_distance = options.get("test_geo_distance", "5mi")
         # Flex Queries parameters
         self.test_flex = options.get("test_flex", 'false')
-        self.test_flex_query_type = options.get('test_flex_query_type', '')
+        self.test_flex_query_type = options.get('test_flex_query_type', 'array_predicate')
         # Collection settings
-        self.collections = int(options.get("collections", "0"))
-        self.scope = int(options.get("scope", "-1"))
-        self.collection_prefix = options.get('collection_prefix', 'collection')
+        self.test_collection_query_mode = options.get('test_collection_query_mode', 'default')
+        # Number of indexes per index - group
+        self.indexes_per_group = int(options.get('indexes_per_group', '1'))
+        # index_group is the number of collections per index
+        # if index_group is 1; all the collections are present in the index_def type mapping
+        self.index_groups = int(options.get('index_groups', '1'))
+        self.fts_index_map = {}
+        self.collections_enabled = False
+        self.test_collection_specific_count = \
+            int(options.get('test_collection_specific_count', '1'))
+
+        # Extra parameters for the FTS debugging
+        self.ftspartitions = options.get('ftspartitions', self.FTS_PARTITIONS)
+        self.fts_max_dcp_partitions = options.get('fts_max_dcp_partitions',
+                                                  self.FTS_MAX_DCP_PARTITIONS)
+        self.fts_node_level_parameters = {}
+        if self.ftspartitions != self.FTS_PARTITIONS:
+            self.fts_node_level_parameters["maxConcurrentPartitionMovesPerNode"] = \
+                self.ftspartitions
+        if self.fts_max_dcp_partitions != self.FTS_MAX_DCP_PARTITIONS:
+            self.fts_node_level_parameters["maxFeedsPerDCPAgent"] = self.fts_max_dcp_partitions
 
     def __str__(self) -> str:
         return str(self.__dict__)
@@ -877,7 +1045,6 @@ class XDCRSettings:
     XDCR_LINKS_PRIORITY = 'HIGH'
     INITIAL_COLLECTION_MAPPING = ''    # std format {"scope-1:collection-1":"scope-1:collection-1"}
     BACKFILL_COLLECTION_MAPPING = ''   # ----------------------"----------------------------------
-    COLLECTIONS_OSO_MODE = False
 
     def __init__(self, options: dict):
         self.demand_encryption = options.get('demand_encryption')
@@ -893,8 +1060,7 @@ class XDCRSettings:
                                                       self.INITIAL_COLLECTION_MAPPING)
         self.backfill_collection_mapping = options.get('backfill_collection_mapping',
                                                        self.BACKFILL_COLLECTION_MAPPING)
-        self.collections_oso_mode = bool(options.get('collections_oso_mode',
-                                                     self.COLLECTIONS_OSO_MODE))
+        self.collections_oso_mode = bool(options.get('collections_oso_mode'))
 
     def __str__(self) -> str:
         return str(self.__dict__)
@@ -918,12 +1084,15 @@ class ViewsSettings:
 class GSISettings:
 
     CBINDEXPERF_CONFIGFILE = ''
+    CBINDEXPERF_CONCURRENCY = 0
+    CBINDEXPERF_REPEAT = 0
     CBINDEXPERF_CONFIGFILES = ''
     RUN_RECOVERY_TEST = 0
     INCREMENTAL_LOAD_ITERATIONS = 0
     SCAN_TIME = 1200
     INCREMENTAL_ONLY = 0
     REPORT_INITIAL_BUILD_TIME = 0
+    DISABLE_PERINDEX_STATS = False
 
     def __init__(self, options: dict):
         self.indexes = {}
@@ -942,6 +1111,10 @@ class GSISettings:
 
         self.cbindexperf_configfile = options.get('cbindexperf_configfile',
                                                   self.CBINDEXPERF_CONFIGFILE)
+        self.cbindexperf_concurrency = int(options.get('cbindexperf_concurrency',
+                                                       self.CBINDEXPERF_CONCURRENCY))
+        self.cbindexperf_repeat = int(options.get('cbindexperf_repeat',
+                                                  self.CBINDEXPERF_REPEAT))
         self.cbindexperf_configfiles = options.get('cbindexperf_configfiles',
                                                    self.CBINDEXPERF_CONFIGFILES)
         self.run_recovery_test = int(options.get('run_recovery_test',
@@ -953,6 +1126,9 @@ class GSISettings:
         self.scan_time = int(options.get('scan_time', self.SCAN_TIME))
         self.report_initial_build_time = int(options.get('report_initial_build_time',
                                                          self.REPORT_INITIAL_BUILD_TIME))
+
+        self.disable_perindex_stats = options.get('disable_perindex_stats',
+                                                  self.DISABLE_PERINDEX_STATS)
 
         self.settings = {}
         for option in options:
@@ -977,10 +1153,13 @@ class GSISettings:
 class DCPSettings:
 
     NUM_CONNECTIONS = 4
+    INVOKE_WARM_UP = 0
 
     def __init__(self, options: dict):
         self.num_connections = int(options.get('num_connections',
                                                self.NUM_CONNECTIONS))
+        self.invoke_warm_up = int(options.get('invoke_warm_up',
+                                              self.INVOKE_WARM_UP))
 
     def __str__(self) -> str:
         return str(self.__dict__)
@@ -1250,7 +1429,7 @@ class EventingSettings:
     TIMER_TIMEOUT = 0
     TIMER_FUZZ = 0
     CONFIG_FILE = "tests/eventing/config/function_sample.json"
-    REQUEST_URL = "http://172.23.96.38/cgi-bin/text/1kb_text_200ms.py"
+    REQUEST_URL = "http://172.23.99.247/cgi-bin/text/1kb_text_200ms.py"
 
     def __init__(self, options: dict):
         self.functions = {}
@@ -1291,6 +1470,10 @@ class AnalyticsSettings:
     DEFAULT_LOG_LEVEL = "DEBUG"
     CACHE_PAGE_SIZE = 131072
     STORAGE_COMPRESSION_BLOCK = None
+    QUERIES = ""
+    ANALYTICS_CONFIG_FILE = ""
+    DROP_DATASET = ""
+    ANALYTICS_LINK = "Local"
 
     def __init__(self, options: dict):
         self.num_io_devices = int(options.get('num_io_devices',
@@ -1299,6 +1482,11 @@ class AnalyticsSettings:
         self.storage_buffer_cache_pagesize = options.get("cache_page_size", self.CACHE_PAGE_SIZE)
         self.storage_compression_block = options.get("storage_compression_block",
                                                      self.STORAGE_COMPRESSION_BLOCK)
+        self.queries = options.get("queries", self.QUERIES)
+        self.analytics_config_file = options.get("analytics_config_file",
+                                                 self.ANALYTICS_CONFIG_FILE)
+        self.drop_dataset = options.get("drop_dataset", self.DROP_DATASET)
+        self.analytics_link = options.get("analytics_link", self.ANALYTICS_LINK)
 
 
 class AuditSettings:
@@ -1349,15 +1537,12 @@ class SDKTestingSettings:
 
 class ClientSettings:
 
-    LIBCOUCHBASE = '2.9.3'
-    PYTHON_CLIENT = '2.5.0'
-    PILLOWFIGHT = '0.0.0'
+    LIBCOUCHBASE = None
+    PYTHON_CLIENT = None
 
     def __init__(self, options: dict):
         self.libcouchbase = options.get('libcouchbase', self.LIBCOUCHBASE)
         self.python_client = options.get('python_client', self.PYTHON_CLIENT)
-        if options.get('pillowfight'):
-            self.pillowfight = options.get('pillowfight')
 
     def __str__(self) -> str:
         return str(self.__dict__)
@@ -1437,6 +1622,57 @@ class TPCDSLoaderSettings:
         return str(self.__dict__)
 
 
+class PYTPCCSettings:
+
+    WAREHOUSE = 1
+    CLIENT_THREADS = 1
+    DURATION = 600
+    MULTI_QUERY_NODE = 0
+    DRIVER = 'n1ql'
+    QUERY_PORT = '8093'
+    KV_PORT = '8091'
+    RUN_SQL_SHELL = 'run_sqlcollections.sh'
+    CBRINDEX_SQL = 'cbcrindexcollection_replicas3.sql'
+    COLLECTION_CONFIG = 'cbcrbucketcollection_20GB.sh'
+    DURABILITY_LEVEL = 'majority'
+    SCAN_CONSISTENCY = 'not_bounded'
+    TXTIMEOUT = 3.0
+    TXT_CLEANUP_WINDOW = 0
+    PYTPCC_BRANCH = 'py3'
+    PYTPCC_REPO = 'https://github.com/couchbaselabs/py-tpcc.git'
+    INDEX_REPLICAS = 0
+
+    def __init__(self, options: dict):
+        self.warehouse = int(options.get('warehouse', self.WAREHOUSE))
+        self.client_threads = int(options.get('client_threads',
+                                              self.CLIENT_THREADS))
+        self.duration = int(options.get('duration', self.DURATION))
+        self.multi_query_node = int(options.get('multi_query_node',
+                                                self.MULTI_QUERY_NODE))
+        self.driver = options.get('driver', self.DRIVER)
+        self.query_port = options.get('query_port', self.QUERY_PORT)
+        self.kv_port = options.get('kv_port', self.KV_PORT)
+        self.run_sql_shell = options.get('run_sql_shell', self.RUN_SQL_SHELL)
+        self.cbrindex_sql = options.get('cbrindex_sql', self.CBRINDEX_SQL)
+        self.collection_config = options.get('collection_config',
+                                             self.COLLECTION_CONFIG)
+        self.durability_level = options.get('durability_level',
+                                            self.DURABILITY_LEVEL)
+        self.scan_consistency = options.get('scan_consistency',
+                                            self.SCAN_CONSISTENCY)
+        self.txtimeout = options.get('txtimeout', self.TXTIMEOUT)
+        self.txt_cleanup_window = int(options.get('txt_cleanup_window',
+                                                  self.TXT_CLEANUP_WINDOW))
+        self.pytpcc_branch = options.get('pytpcc_branch', self.PYTPCC_BRANCH)
+        self.pytpcc_repo = options.get('pytpcc_repo', self.PYTPCC_REPO)
+        self.use_pytpcc_backup = bool(options.get('use_pytpcc_backup'))
+        self.index_replicas = int(options.get('index_replicas',
+                                              self.INDEX_REPLICAS))
+
+    def __str__(self) -> str:
+        return str(self.__dict__)
+
+
 class TestConfig(Config):
 
     @property
@@ -1471,18 +1707,33 @@ class TestConfig(Config):
 
     @property
     def bucket_extras(self) -> dict:
-        return self._get_options_as_dict('bucket_extras')
+        bucket_extras = self._get_options_as_dict('bucket_extras')
+        options = self._get_options_as_dict('access')
+        access = AccessSettings(options)
+        if access.durability_set:
+            if "num_writer_threads" not in bucket_extras:
+                bucket_extras["num_writer_threads"] = "disk_io_optimized"
+        return bucket_extras
 
     @property
     def buckets(self) -> List[str]:
-        return [
-            'bucket-{}'.format(i + 1) for i in range(self.cluster.num_buckets)
-        ]
+        if self.cluster.num_buckets == 1 and self.cluster.bucket_name != 'bucket-1':
+            return [self.cluster.bucket_name]
+        else:
+            return [
+                'bucket-{}'.format(i + 1) for i in range(self.cluster.num_buckets)
+            ]
 
     @property
     def eventing_buckets(self) -> List[str]:
         return [
             'eventing-bucket-{}'.format(i + 1) for i in range(self.cluster.eventing_buckets)
+        ]
+
+    @property
+    def eventing_metadata_bucket(self) -> List[str]:
+        return [
+            'eventing'
         ]
 
     @property
@@ -1619,6 +1870,10 @@ class TestConfig(Config):
         collection_settings = CollectionSettings(collection_options)
         if collection_settings.collection_map is not None:
             access.collections = collection_settings.collection_map
+
+        if access.split_workload is not None:
+            with open(access.split_workload) as f:
+                access.split_workload = json.load(f)
 
         if hasattr(access, 'n1ql_queries'):
             access.define_queries(self)
@@ -1758,14 +2013,20 @@ class TestConfig(Config):
         options = self._get_options_as_dict('TPCDSLoader')
         return TPCDSLoaderSettings(options)
 
+    @property
+    def pytpcc_settings(self) -> PYTPCCSettings:
+        options = self._get_options_as_dict('py_tpcc')
+        return PYTPCCSettings(options)
+
 
 class TargetSettings:
 
-    def __init__(self, host: str, bucket: str, password: str, prefix: str):
+    def __init__(self, host: str, bucket: str, password: str, prefix: str, cloud: dict = None):
         self.password = password
         self.node = host
         self.bucket = bucket
         self.prefix = prefix
+        self.cloud = cloud
 
     @property
     def connection_string(self) -> str:
@@ -1794,4 +2055,8 @@ class TargetIterator(Iterable):
             for bucket in self.test_config.buckets:
                 if self.prefix is None:
                     prefix = target_hash(master)
-                yield TargetSettings(master, bucket, password, prefix)
+                if self.cluster_spec.dynamic_infrastructure:
+                    yield TargetSettings(master, bucket, password, prefix,
+                                         {'cluster_svc': 'cb-example-perf'})
+                else:
+                    yield TargetSettings(master, bucket, password, prefix)

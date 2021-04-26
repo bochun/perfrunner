@@ -7,7 +7,7 @@ title = 4 nodes, BigFUN 20M users (320M docs), SSD, no indexes (ad hoc), s=1 c=3
 component = analytics
 category = latency
 sub_category = Without Index
-orderby = _ssd
+orderby = _ssd_4n_3
 
 [stats]
 server_processes = java
@@ -23,6 +23,8 @@ config = collections/1bucket_1scope_3collections_analytics.json
 
 [analytics]
 num_io_devices = 4
+queries = perfrunner/workloads/bigfun/queries_without_index.json
+analytics_config_file = tests/analytics/config/3_datasets_collection_config.json
 
 [bucket]
 eviction_policy = fullEviction
@@ -31,7 +33,7 @@ eviction_policy = fullEviction
 backup_storage = /data2/backup/3collections/
 backup_repo = default
 threads = 8
-map_data = bucket-1.scope-1.GleambookUsers=bucket-1.scope-1.GleambookUsers,bucket-1.scope-1.GleambookMessages=bucket-1.scope-1.GleambookMessages,bucket-1.scope-1.ChirpMessages=bucket-1.scope-1.ChirpMessages
+map_data = bucket-1.scope-1.GleambookUsers=bucket-1.scope-1.GleambookUsers-1,bucket-1.scope-1.GleambookMessages=bucket-1.scope-1.GleambookMessages-1,bucket-1.scope-1.ChirpMessages=bucket-1.scope-1.ChirpMessages-1
 
 [access]
 analytics_warmup_ops = 3

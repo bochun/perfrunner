@@ -7,7 +7,7 @@ title = 2 nodes, BigFUN 20M users (320M docs), HDD
 component = analytics
 category = latency
 sub_category = With Index
-orderby = hdd
+orderby = _hdd_2n
 
 [stats]
 server_processes = java
@@ -34,3 +34,7 @@ analytics_warmup_ops = 10
 analytics_warmup_workers = 1
 ops = 30
 workers = 1
+
+[clients]
+libcouchbase = 2.9.3
+python_client = 2.5.0

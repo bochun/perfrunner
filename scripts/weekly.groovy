@@ -67,6 +67,18 @@ pipeline {
                         buildComponent('FTS', testCases)
                     }
                 }
+                stage("FTS-Rebalance"){
+                    when { expression { return params.FTS_Rebalance } }
+                    steps {
+                        buildComponent('FTS-Rebalance', testCases)
+                    }
+                }
+                stage("FTS-MultiIndex"){
+                    when { expression { return params.FTS_MultiIndex } }
+                    steps {
+                        buildComponent('FTS-MultiIndex', testCases)
+                    }
+                }
                 stage('GSI') {
                     when { expression { return params.GSI } }
                     steps {
@@ -210,6 +222,12 @@ pipeline {
                     when { expression { return params.MagmaNVME } }
                     steps {
                         buildComponent('MagmaNVME', testCases)
+                    }
+                }
+                stage('GSI-Recovery') {
+                    when { expression { return params.GSI_Recovery } }
+                    steps {
+                        buildComponent('GSI-Recovery', testCases)
                     }
                 }
             }

@@ -38,14 +38,19 @@ creates = 0
 reads = 0
 updates = 100
 deletes = 0
-throughput = 30000
+throughput = 15000
 items = 100000000
 workers = 20
 time = 1200
 n1ql_queries = aggregation-query
-n1ql_workers = 480
+n1ql_workers = 240
+workload_instances = 2
 
 [n1ql-aggregation-query]
 statement = SELECT COUNT(*) FROM `bucket-1` WHERE capped_small > $1 AND capped_small < $2;
 args = ["{capped_small}","{capped_small_range}"]
 scan_consistency = not_bounded
+
+[clients]
+libcouchbase = 2.9.3
+python_client = 2.5.0

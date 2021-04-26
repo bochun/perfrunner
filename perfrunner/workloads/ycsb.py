@@ -22,7 +22,11 @@ def ycsb_data_load(workload_settings: PhaseSettings,
             'inserts_per_workerinstance': workload_settings.inserts_per_workerinstance,
         }
 
-    run_ycsb(host=target.node,
+    host = target.node
+    if target.cloud:
+        host = target.cloud['cluster_svc']
+
+    run_ycsb(host=host,
              bucket=target.bucket,
              password=target.password,
              action='load',
@@ -52,7 +56,8 @@ def ycsb_data_load(workload_settings: PhaseSettings,
              ycsb_jvm_args=workload_settings.ycsb_jvm_args,
              collections_map=workload_settings.collections,
              timeseries=workload_settings.timeseries,
-             phase_params=phase_params)
+             phase_params=phase_params,
+             cloud=target.cloud)
 
 
 def ycsb_workload(workload_settings: PhaseSettings,
@@ -74,7 +79,20 @@ def ycsb_workload(workload_settings: PhaseSettings,
         elif instance >= split_instance:
             workload_settings.workload_path = workload_settings.workload_path.split(",")[1]
 
-    run_ycsb(host=target.node,
+    insert_test_params = None
+    if workload_settings.insert_test_flag:
+        insert_test_params = {
+            'insertstart': int(instance * workload_settings.inserts_per_workerinstance +
+                               workload_settings.items),
+            'recordcount': int((instance+1) * workload_settings.inserts_per_workerinstance +
+                               workload_settings.items),
+        }
+
+    host = target.node
+    if target.cloud:
+        host = target.cloud['cluster_svc']
+
+    run_ycsb(host=host,
              bucket=target.bucket,
              password=target.password,
              action='run',
@@ -115,4 +133,6 @@ def ycsb_workload(workload_settings: PhaseSettings,
              num_atrs=workload_settings.num_atrs,
              ycsb_jvm_args=workload_settings.ycsb_jvm_args,
              collections_map=workload_settings.collections,
-             out_of_order=workload_settings.ycsb_out_of_order)
+             out_of_order=workload_settings.ycsb_out_of_order,
+             insert_test_params=insert_test_params,
+             cloud=target.cloud)

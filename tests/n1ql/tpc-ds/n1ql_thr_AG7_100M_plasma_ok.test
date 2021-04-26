@@ -34,10 +34,15 @@ items = 1000000
 time = 600
 n1ql_queries = aggregation
 n1ql_batch_size = 10
-n1ql_workers = 240
+n1ql_workers = 120
+workload_instances = 2
 
 [n1ql-aggregation]
 statement = SELECT customer.zip FROM `bucket-1` WHERE customer.zip IN $1 AND customer.preferred_flag = true GROUP BY customer.zip HAVING COUNT(1) > 10;
 scan_consistency = not_bounded
 args = [{zip_codes}]
 ad_hoc = true
+
+[clients]
+libcouchbase = 2.9.3
+python_client = 2.5.0

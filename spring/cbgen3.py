@@ -9,16 +9,16 @@ from couchbase.cluster import (
 )
 from couchbase.management.collections import CollectionSpec
 from couchbase.management.users import User
+from couchbase_core.cluster import PasswordAuthenticator
+from couchbase_core.views.params import ViewQuery
 from txcouchbase.cluster import TxCluster
 
-from couchbase_core.cluster import PasswordAuthenticator
-from logger import logger
 from spring.cbgen_helpers import backoff, quiet, timeit
 
 
 class CBAsyncGen3:
 
-    TIMEOUT = 60  # seconds
+    TIMEOUT = 120  # seconds
 
     def __init__(self, **kwargs):
         connection_string = 'couchbase://{host}?password={password}'
@@ -32,7 +32,6 @@ class CBAsyncGen3:
         self.bucket_name = kwargs['bucket']
         self.collections = dict()
         self.collection = None
-        logger.info("Connection string: {}".format(connection_string))
 
     def connect_collections(self, scope_collection_list):
         self.bucket = self.cluster.bucket(self.bucket_name)
@@ -103,7 +102,8 @@ class CBAsyncGen3:
 
 class CBGen3(CBAsyncGen3):
 
-    TIMEOUT = 60  # seconds
+    TIMEOUT = 120  # seconds
+    N1QL_TIMEOUT = 600
 
     def __init__(self, ssl_mode: str = 'none', n1ql_timeout: int = None, **kwargs):
         connection_string = 'couchbase://{host}?password={password}&{params}'
@@ -119,18 +119,17 @@ class CBGen3(CBAsyncGen3):
                                                      params=connstr_params)
 
         pass_auth = PasswordAuthenticator(kwargs['username'], kwargs['password'])
-        if n1ql_timeout:
-            timeout = ClusterTimeoutOptions(kv_timeout=timedelta(seconds=self.TIMEOUT),
-                                            query_timeout=timedelta(seconds=n1ql_timeout))
-        else:
-            timeout = ClusterTimeoutOptions(kv_timeout=timedelta(seconds=self.TIMEOUT))
+        timeout = ClusterTimeoutOptions(
+            kv_timeout=timedelta(seconds=self.TIMEOUT),
+            query_timeout=timedelta(
+                seconds=n1ql_timeout if n1ql_timeout else self.N1QL_TIMEOUT)
+        )
         options = ClusterOptions(authenticator=pass_auth, timeout_options=timeout)
         self.cluster = Cluster(connection_string=connection_string, options=options)
         self.bucket_name = kwargs['bucket']
         self.bucket = None
         self.collections = dict()
         self.collection = None
-        logger.info("Connection string: {}".format(connection_string))
 
     def create(self, *args, **kwargs):
         self.collection = self.collections[args[0]]
@@ -154,15 +153,25 @@ class CBGen3(CBAsyncGen3):
         self.collection = self.collections[args[0]]
         return self.do_read(*args[1:], **kwargs)
 
+    def get(self, *args, **kwargs):
+        self.collection = self.collections[args[0]]
+        return self.do_get(*args[1:], **kwargs)
+
+    def do_get(self, *args, **kwargs):
+        return super().do_read(*args, **kwargs)
+
     @quiet
     @backoff
     @timeit
     def do_read(self, *args, **kwargs):
         super().do_read(*args, **kwargs)
 
-    def update(self, *args, **kwargs):
+    def set(self, *args, **kwargs):
         self.collection = self.collections[args[0]]
         return self.do_update(*args[1:], **kwargs)
+
+    def do_set(self, *args, **kwargs):
+        return super().do_update(*args, **kwargs)
 
     @quiet
     @backoff
@@ -187,6 +196,10 @@ class CBGen3(CBAsyncGen3):
     @quiet
     def do_delete(self, *args, **kwargs):
         super().do_delete(*args, **kwargs)
+
+    @timeit
+    def view_query(self, ddoc: str, view: str, query: ViewQuery):
+        tuple(self.cluster.view_query(ddoc, view, query=query))
 
     @quiet
     @timeit

@@ -2,7 +2,7 @@
 test = perfrunner.tests.magma.MixedLatencyDGMTest
 
 [showfast]
-title = Latency(ms), Workload S0.6, 2 nodes, 250M x 1KB, 20K ops/sec (33/34/33 C/R/W), Uniform distribution, Magma
+title = Latency(ms), Workload S0.6, 2 nodes, 250M x 1KB, 20K ops/sec (33/34/33 C/R/W), Uniform distribution, 2.4%% Resident Ratio, Magma
 component = hidd
 category = S0
 orderby = S06
@@ -54,7 +54,11 @@ reads = 34
 updates = 33
 deletes = 0
 items = 250000000
-workers = 60
+workers = 128
 throughput = 20000
 time = 3600
 requestdistribution = uniform
+
+[clients]
+libcouchbase = 2.9.3
+python_client = 2.5.0

@@ -6,6 +6,7 @@ title = Functions executed/sec, 1 bucket x 50M x 1KB, KV Rebalance, 3KV > 4KV + 
 component = eventing
 category = thr
 sub_category = Function
+orderby = ae003
 
 [stats]
 server_processes = eventing-produc
@@ -47,3 +48,6 @@ updates = 100
 items = 50000000
 workers = 100
 
+[clients]
+libcouchbase = 2.9.3
+python_client = 2.5.0

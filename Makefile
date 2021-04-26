@@ -3,12 +3,15 @@ SHELL := /bin/bash
 PATH := ${GOPATH}/bin:$(PATH)
 
 ENV := env
-PYTHON := python3.5
+PYTHON := python3.6
 PYTHON_PROJECTS := cbagent perfdaily perfrunner scripts spring
-
 .PHONY: docker
 
 all:
+	export PYENV_ROOT="$$HOME/.pyenv" && \
+	export PATH="$$PYENV_ROOT/bin:$$PATH" && \
+	eval "$$(pyenv init -)" && \
+	pyenv local 3.6.12 && \
 	virtualenv --quiet --python ${PYTHON} ${ENV}
 	${ENV}/bin/pip install --upgrade --quiet pip wheel
 	${ENV}/bin/pip install --quiet --no-warn-script-location -r requirements.txt
@@ -21,7 +24,7 @@ clean:
 
 pep8:
 	${ENV}/bin/flake8 --statistics ${PYTHON_PROJECTS}
-	${ENV}/bin/isort --quiet --check-only --recursive ${PYTHON_PROJECTS}
+	${ENV}/bin/isort --quiet --check-only ${PYTHON_PROJECTS}
 	${ENV}/bin/pydocstyle ${PYTHON_PROJECTS}
 
 test:
@@ -65,6 +68,14 @@ loader:
 
 docker:
 	docker build -t docker.io/perflab/perfrunner docker
+
+docker-cloud-worker:
+	pyenv local 3.6.12 && \
+	virtualenv --quiet --python ${PYTHON} ${ENV}
+	${ENV}/bin/pip install --upgrade --quiet pip wheel
+	${ENV}/bin/pip install --quiet --no-warn-script-location -r requirements.txt
+	${ENV}/bin/python setup.py --quiet install
+	pwd > ${ENV}/lib/${PYTHON}/site-packages/perfrunner.pth
 
 CONTAINER_PASSWORD := puppet
 docker-compose:

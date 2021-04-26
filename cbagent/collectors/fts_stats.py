@@ -1,4 +1,4 @@
-from cbagent.collectors import Collector
+from cbagent.collectors.collector import Collector
 from perfrunner.helpers import rest
 
 
@@ -50,7 +50,7 @@ class FTSCollector(Collector):
     def __init__(self, settings, test):
         super().__init__(settings)
         self.cbft_stats = dict()
-        self.fts_index_name = test.access.couchbase_index_name
+        self.fts_index_name = "{}-0".format(test.access.couchbase_index_name)
         self.allbuckets = [x for x in self.get_buckets()]
         self.fts_nodes = test.fts_nodes
         self.rest = rest.RestHelper(test.cluster_spec)
