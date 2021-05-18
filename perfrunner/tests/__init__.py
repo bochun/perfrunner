@@ -45,7 +45,7 @@ class PerfTest:
         self.memcached = MemcachedHelper(test_config)
         self.monitor = Monitor(cluster_spec, test_config, verbose)
         self.rest = RestHelper(cluster_spec)
-        self.build = self.rest.get_version(self.master_node)
+        self.build = '5.6.0.3'
         self.metrics = MetricHelper(self)
         self.reporter = ShowFastReporter(cluster_spec, test_config, self.build)
 
@@ -60,7 +60,7 @@ class PerfTest:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        failure = self.debug()
+        # failure = self.debug()
 
         self.tear_down()
 
@@ -68,8 +68,8 @@ class PerfTest:
             logger.warn('The test was interrupted')
             return True
 
-        if failure:
-            logger.interrupt(failure)
+        # if failure:
+        #    logger.interrupt(failure)
 
     @property
     def query_nodes(self) -> List[str]:

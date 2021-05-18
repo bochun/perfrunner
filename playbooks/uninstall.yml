@@ -23,6 +23,8 @@
       - mongos
       - mysqld
       - sync_gateway
+      - amc
+      - asd
 
   - name: uninstalling the database packages
     yum: state=absent name={{item}}
@@ -30,6 +32,10 @@
       - 'couchbase*'
       - 'mongodb*'
       - 'MariaDB*'
+      - 'aerospike-server-community*'
+      - 'aerospike-tools*'
+      - 'aerospike-prometheus-exporter*'
+      - 'aerospike-amc-enterprise*'
 
   - name: removing Couchbase Server files
     file: path={{ couchbase_home }} state=absent
@@ -52,3 +58,37 @@
     shell: rm -fr /var/lib/mysql
     args:
       warn: no
+
+  - name: removing Aerospike files and folders
+    file: path={{ item }} state=absent
+    with_items:
+      - /var/run/amc.pid
+      - /etc/init.d/aerospike
+      - /etc/init.d/amc
+      - /etc/logrotate.d/aerospike
+      - /usr/bin/aql
+      - /usr/bin/asadm
+      - /usr/bin/asbackup
+      - /usr/bin/asgraphite
+      - /usr/bin/asinfo
+      - /usr/bin/asloglatency
+      - /usr/bin/asrestore
+      - /usr/bin/asd
+      - /usr/bin/asfixownership
+      - /usr/bin/asmigrate2to3
+      - /usr/bin/asbenchmark
+      - /usr/bin/asloader
+      - /usr/bin/asvalidation
+      - /usr/bin/asd-coldstart
+      - /usr/bin/asd-systemd-helper
+      - /etc/aerospike
+      - /etc/amc
+      - /etc/aerospike-prometheus-exporter
+      - /opt/aerospike
+      - /opt/amc
+      - /var/log/aerospike
+      - /var/log/amc
+      - /var/log/amc.log
+      - /var/run/aerospike
+      - /root/aerospike.tgz
+      - /root/aerospike-amc-enterprise.rpm

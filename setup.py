@@ -25,6 +25,7 @@ setup(
             'trigger = perfrunner.utils.trigger:main',
             'verify_logs = perfrunner.utils.verify_logs:main',
             'weekly = perfrunner.utils.weekly:main',
+            'aerospikecluster = perfrunner.utils.aerospikecluster:main',
         ],
     },
     ext_modules=[

@@ -556,30 +556,16 @@ def run_ycsb(host: str,
           '-p fieldlength={fieldlength} ' \
           '-p fieldcount={fieldcount} ' \
           '-p requestdistribution={requestdistribution} ' \
-          '-p couchbase.host={host} ' \
-          '-p couchbase.bucket={bucket} ' \
-          '-p couchbase.upsert=true ' \
-          '-p couchbase.epoll={epoll} ' \
-          '-p couchbase.boost={boost} ' \
-          '-p couchbase.kvEndpoints={kv_endpoints} ' \
-          '-p couchbase.sslMode={ssl_mode} ' \
-          '-p couchbase.certKeystoreFile=../{ssl_keystore_file} ' \
-          '-p couchbase.certKeystorePassword={ssl_keystore_password} ' \
-          '-p couchbase.certificateFile=../{certificate_file} ' \
-          '-p couchbase.password={password} ' \
-          '-p exportfile=ycsb_{action}_{instance}.log ' \
-          '-p couchbase.retryStrategy={retry_strategy} ' \
-          '-p couchbase.retryLower={retry_lower} ' \
-          '-p couchbase.retryUpper={retry_upper} ' \
-          '-p couchbase.retryFactor={retry_factor} '
+          '-p as.host={host} ' \
+          '-p exportfile=ycsb_{action}_{instance}.log '
 
     cmd = 'pyenv local system && ' + cmd
 
-    if durability is None:
-        cmd += '-p couchbase.persistTo={persist_to} '
-        cmd += '-p couchbase.replicateTo={replicate_to} '
-    else:
-        cmd += '-p couchbase.durability={durability} '
+    # if durability is None:
+    #     cmd += '-p couchbase.persistTo={persist_to} '
+    #     cmd += '-p couchbase.replicateTo={replicate_to} '
+    # else:
+    #     cmd += '-p couchbase.durability={durability} '
 
     if enable_mutation_token is not None:
         cmd += '-p couchbase.enableMutationToken={enable_mutation_token} '
@@ -814,7 +800,7 @@ def start_celery_worker(queue: str):
               '-A perfrunner.helpers.worker -l INFO -Q {} > worker.log &'.format(queue))
 
 
-def clone_git_repo(repo: str, branch: str, commit: str = None):
+def clone_git_repo(repo: str, workload: str, branch: str, commit: str = None):
     repo_name = repo.split("/")[-1].split(".")[0]
     logger.info('checking if repo {} exists...'.format(repo_name))
     if os.path.exists("{}".format(repo_name)):
@@ -822,6 +808,16 @@ def clone_git_repo(repo: str, branch: str, commit: str = None):
         shutil.rmtree(repo_name, ignore_errors=True)
     logger.info('Cloning repository: {} branch: {}'.format(repo, branch))
     local('git clone -q -b {} {}'.format(branch, repo))
+
+    workload_name = workload.split("/")[-1].split(".")[0]
+    logger.info('checking if workload {} exists...'.format(workload_name))
+    if os.path.exists("{}".format(workload_name)):
+        logger.info('workload {} exists...removing...'.format(workload_name))
+        shutil.rmtree(workload_name, ignore_errors=True)
+    logger.info('Cloning repository: {} branch: {}'.format(workload, branch))
+    local('git clone -q -b {} {}'.format(branch, workload))
+    local('cp {}/configs/simple_ycsb/YCSB/* {}/workloads/'.format(workload_name, repo_name))
+
     if commit:
         with lcd(repo_name):
             local('git checkout {}'.format(commit))

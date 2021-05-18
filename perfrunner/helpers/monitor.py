@@ -60,9 +60,9 @@ class DefaultMonitor(DefaultRestHelper):
         self.test_config = test_config
         self.remote = RemoteHelper(cluster_spec, verbose)
         self.master_node = next(cluster_spec.masters)
-        self.build = self.get_version(self.master_node)
-        version, build_number = self.build.split('-')
-        self.build_version_number = tuple(map(int, version.split('.'))) + (int(build_number),)
+        # self.build = self.get_version(self.master_node)
+        # version, build_number = self.build.split('-')
+        # self.build_version_number = tuple(map(int, version.split('.'))) + (int(build_number),)
 
     def monitor_rebalance(self, host):
         logger.info('Monitoring rebalance status')

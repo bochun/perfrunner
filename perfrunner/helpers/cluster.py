@@ -24,7 +24,7 @@ class ClusterManager:
         self.master_node = next(self.cluster_spec.masters)
 
         self.initial_nodes = test_config.cluster.initial_nodes
-        self.build = self.rest.get_version(self.master_node)
+        # self.build = self.rest.get_version(self.master_node)
 
     def is_compatible(self, min_release: str) -> bool:
         for master in self.cluster_spec.masters:

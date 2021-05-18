@@ -78,22 +78,16 @@ class Remote:
                 run('git checkout {}'.format(commit))
 
     @all_clients
-    def init_ycsb(self, repo: str, branch: str, worker_home: str, sdk_version: None):
+    def init_ycsb(self, repo: str, workload: str, branch: str, worker_home: str, sdk_version: None):
         shutil.rmtree("YCSB", ignore_errors=True)
+        shutil.rmtree("aerospike-benchmarks", ignore_errors=True)
+        repo_name = repo.split("/")[-1].split(".")[0]
+        workload_name = workload.split("/")[-1].split(".")[0]
         self.clone_git_repo(repo=repo, branch=branch, worker_home=worker_home)
-        if sdk_version is not None:
-            sdk_version = sdk_version.replace(":", ".")
-            major_version = sdk_version.split(".")[0]
-            with cd(worker_home), cd('perfrunner'), cd('YCSB'):
-                cb_version = "couchbase"
-                if major_version is "1":
-                    cb_version += ""
-                else:
-                    cb_version += major_version
-                original_string = '<{0}.version>*.*.*<\/{0}.version>'.format(cb_version)
-                new_string = '<{0}.version>{1}<\/{0}.version>'.format(cb_version, sdk_version)
-                cmd = "sed -i 's/{}/{}/g' pom.xml".format(original_string, new_string)
-                run(cmd)
+        self.clone_git_repo(repo=workload, branch=branch, worker_home=worker_home)
+        with cd(worker_home), cd('perfrunner'):
+            run('cp {}/configs/simple_ycsb/YCSB/* {}/workloads/'.format(workload_name, repo_name))
+
 
     @all_clients
     def init_tpcds_couchbase_loader(self, repo: str, branch: str, worker_home: str):

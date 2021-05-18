@@ -184,15 +184,15 @@ class CbAgent:
         self.collectors = []
         self.processes = []
 
-        self.add_collector(NSServer)
-        self.add_collector(ActiveTasks)
+        # self.add_collector(NSServer)
+        # self.add_collector(ActiveTasks)
 
-        split_version = self.test.build.split(".")
-        major = int(split_version[0])
-        minor = int(split_version[1])
+        # split_version = self.test.build.split(".")
+        # major = int(split_version[0])
+        # minor = int(split_version[1])
 
-        if (major == 6 and minor < 6) or (major < 6 and major != 0):
-            self.add_collector(NSServerOverview)
+        # if (major == 6 and minor < 6) or (major < 6 and major != 0):
+        #     self.add_collector(NSServerOverview)
 
         if latency:
             self.add_collector(KVLatency)

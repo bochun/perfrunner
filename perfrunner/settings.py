@@ -1503,7 +1503,8 @@ class AuditSettings:
 
 class YCSBSettings:
 
-    REPO = 'git://github.com/couchbaselabs/YCSB.git'
+    REPO = 'git://github.com/aerospike/YCSB.git'
+    AEROSPIKE_WORKLOAD = 'git://github.com/aerospike/aerospike-benchmarks.git'
     BRANCH = 'master'
     SDK_VERSION = None
     LATENCY_PERCENTILES = [98]
@@ -1511,6 +1512,7 @@ class YCSBSettings:
 
     def __init__(self, options: dict):
         self.repo = options.get('repo', self.REPO)
+        self.aerospike_workload = options.get('aerospike_workload', self.AEROSPIKE_WORKLOAD)
         self.branch = options.get('branch', self.BRANCH)
         self.sdk_version = options.get('sdk_version', self.SDK_VERSION)
         self.latency_percentiles = options.get('latency_percentiles', self.LATENCY_PERCENTILES)
