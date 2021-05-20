@@ -682,6 +682,7 @@ def run_ycsb(host: str,
 
         cmd += ' -p scopesparam={scopesparam} '.format(scopesparam=scopes_param)
 
+    cmd += ' -p core_workload_insertion_retry_limit=10 '
     cmd += ' 2>ycsb_{action}_{instance}_stderr.log '.format(action=action, instance=instance)
 
     logger.info('Running: {}'.format(cmd))

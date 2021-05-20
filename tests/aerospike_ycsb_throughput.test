@@ -16,7 +16,7 @@ initial_nodes = 3
 workload_path = workloads/workload-asload
 ycsb_client = aerospike
 items = 1500000000
-workers = 275
+workers = 300
 
 [access]
 workload_path = workloads/workload-asrun
@@ -24,8 +24,8 @@ ycsb_client = aerospike
 items = 1500000000
 ops = 1500000000
 time = 1800
-workers = 275
-workload_instances = 1
+workers = 300
+workload_instances = 3
 requestdistribution = zipfian
 
 [ycsb]
