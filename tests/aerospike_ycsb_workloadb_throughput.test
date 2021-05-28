@@ -1,0 +1,34 @@
+[test_case]
+test = perfrunner.tests.aerospike.YCSBThroughputTest
+
+[showfast]
+title = Avg Throughput (ops/sec), Workload C, 3 nodes
+component = kv
+category = ycsb
+sub_category = ycsb3
+orderby = a10
+
+[cluster]
+mem_quota = 102400
+initial_nodes = 3
+
+[load]
+workload_path = workloads/workloadb
+ycsb_client = aerospike
+items = 1500000000
+workers = 300
+
+[access]
+workload_path = workloads/workloadb
+ycsb_client = aerospike
+items = 1500000000
+ops = 1500000000
+time = 1800
+workers = 300
+workload_instances = 3
+
+[ycsb]
+branch = master
+
+[stats]
+client_processes = java
