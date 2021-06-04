@@ -28,7 +28,8 @@ workers = 300
 workload_instances = 3
 
 [ycsb]
-branch = master
+repo = git://github.com/couchbaselabs/YCSB.git
+branch = couchbase3
 
 [stats]
 client_processes = java

@@ -12,7 +12,7 @@ from perfrunner.settings import ClusterSpec, TestConfig
 
 class AerospikeInstaller:
 
-    def __init__(self, cluster_spec, test_config, options):
+    def __init__(self, cluster_spec: ClusterSpec, test_config: TestConfig, options):
         self.test_config = test_config
         self.cluster_spec = cluster_spec
         self.client_settings = self.test_config.client_settings.__dict__
@@ -46,7 +46,8 @@ class AerospikeInstaller:
     @all_servers
     def start_aerospike(self):
         logger.info("Start Aerospike server")
-        run("cp /root/aerospike/aerospike.conf /etc/aerospike/aerospike.conf")
+        run("cp /root/aerospike/{} /etc/aerospike/aerospike.conf"
+            .format(self.test_config.cluster.aerospike_conf))
         run("mkdir /var/log/aerospike")
         run("touch /var/log/aerospike/aerospike.log")
         run("systemctl start aerospike")

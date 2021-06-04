@@ -284,7 +284,7 @@ class ClusterSettings:
     ENABLE_CPU_CORES = 'true'
     ENABLE_N2N_ENCRYPTION = None
     BUCKET_NAME = 'bucket-1'
-
+    AEROSPIKE_CONF = 'aerospike.conf'
     IPv6 = 0
 
     def __init__(self, options: dict):
@@ -328,6 +328,7 @@ class ClusterSettings:
             self.kernel_mem_limit_services = self.KERNEL_MEM_LIMIT_SERVICES
 
         self.bucket_name = options.get('bucket_name', self.BUCKET_NAME)
+        self.aerospike_conf = options.get('aerospike_conf', self.AEROSPIKE_CONF)
 
 
 class StatsSettings:

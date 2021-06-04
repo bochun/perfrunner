@@ -815,8 +815,8 @@ def clone_git_repo(repo: str, workload: str, branch: str, commit: str = None):
     if os.path.exists("{}".format(workload_name)):
         logger.info('workload {} exists...removing...'.format(workload_name))
         shutil.rmtree(workload_name, ignore_errors=True)
-    logger.info('Cloning repository: {} branch: {}'.format(workload, branch))
-    local('git clone -q -b {} {}'.format(branch, workload))
+    logger.info('Cloning repository: {} branch: {}'.format(workload, 'master'))
+    local('git clone -q -b {} {}'.format('master', workload))
     local('cp {}/configs/simple_ycsb/YCSB/* {}/workloads/'.format(workload_name, repo_name))
 
     if commit:
