@@ -43,6 +43,8 @@ class YCSBTest(PerfTest):
 
         self.report_kpi()
 
+        self.remote.asinfo()
+
 
 class YCSBThroughputTest(YCSBTest):
 

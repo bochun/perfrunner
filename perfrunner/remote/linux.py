@@ -886,3 +886,14 @@ class RemoteLinux(Remote):
         logger.info('Enabling developer preview')
         run("curl -X POST -u Administrator:password "
             "localhost:8091/settings/developerPreview -d 'enabled=true'", pty=False)
+
+    @master_server
+    def asinfo(self):
+        logger.info('Running asinfo')
+        try:
+            output = run('/usr/bin/asinfo -h localhost', warn_only=True)
+            for line in output.splitlines():
+                print(line)
+        except Exception:
+            logger.error('asinfo failed')
+            return
