@@ -34,10 +34,17 @@ class YCSBTest(PerfTest):
     def access(self, *args, **kwargs):
         PerfTest.access(self, task=ycsb_task)
 
+    def run_extra_access(self):
+        logger.info("Starting first access phase")
+        PerfTest.access(self, task=ycsb_task, settings=self.test_config.extra_access_settings)
+
     def run(self):
         self.download_ycsb()
 
         self.load()
+
+        if self.test_config.extra_access_settings.run_extra_access:
+            self.run_extra_access()
 
         self.access()
 

@@ -18,6 +18,16 @@ ycsb_client = aerospike
 items = 1500000000
 workers = 300
 
+[extra_access]
+run_extra_access = true
+workload_path = workloads/workloadupdate
+ycsb_client = aerospike
+items = 1500000000
+ops = 1500000000
+time = 86400
+workers = 300
+requestdistribution = uniform
+
 [access]
 workload_path = workloads/workloadb
 ycsb_client = aerospike
