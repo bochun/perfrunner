@@ -1,0 +1,42 @@
+[test_case]
+test = perfrunner.tests.aerospike.YCSBThroughputTest
+
+[showfast]
+title = Avg Throughput (ops/sec), Workload G, 4 nodes, 100M x 6KB, Uniform distribution
+component = kv
+category = ycsb
+sub_category = ycsb3
+orderby = a10
+
+[cluster]
+mem_quota = 102400
+initial_nodes = 4
+aerospike_conf = aerospike_4n.conf
+
+[load]
+workload_path = workloads/workloadg
+ycsb_client = aerospike
+items = 100000000
+workers = 300
+field_length = 6000
+field_count = 1
+size = 6000
+
+[access]
+workload_path = workloads/workloadg
+ycsb_client = aerospike
+items = 100000000
+ops = 1000000000
+time = 10800
+workers = 300
+workload_instances = 3
+field_length = 6000
+field_count = 1
+requestdistribution = uniform
+
+[ycsb]
+repo = git://github.com/couchbaselabs/YCSB.git
+branch = couchbase3
+
+[stats]
+client_processes = java
